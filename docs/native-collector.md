@@ -127,10 +127,20 @@ go run ./cmd/xhs-tool analyze item --db data/xhs.db --id 1 --engine llm --llm-mo
 
 ## 选题评分
 
-基于拆解结果生成候选选题和评分：
+基于拆解结果生成候选选题和评分。规则版适合验证链路：
 
 ```bash
-go run ./cmd/xhs-tool score batch --db data/xhs.db --limit 20
+go run ./cmd/xhs-tool score batch --db data/xhs.db --limit 20 --engine rule
+```
+
+大模型版使用 OpenAI-compatible API：
+
+```bash
+export XHS_LLM_BASE_URL=https://api.openai.com/v1
+export XHS_LLM_API_KEY=your_api_key
+export XHS_LLM_MODEL=your_model
+
+go run ./cmd/xhs-tool score batch --db data/xhs.db --limit 20 --engine llm
 ```
 
 查看评分结果：
@@ -139,7 +149,7 @@ go run ./cmd/xhs-tool score batch --db data/xhs.db --limit 20
 go run ./cmd/xhs-tool score list --db data/xhs.db --limit 20
 ```
 
-当前是规则评分器，用于验证链路和解释维度。真实运营阶段需要根据人工反馈和发布表现校准权重。
+真实运营阶段需要根据人工反馈和发布表现校准评分提示词、规则权重和阈值。
 
 ## 内容草稿生成
 

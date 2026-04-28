@@ -25,7 +25,7 @@ cmd/
 internal/
   collector/             执行外部采集命令，并保存结果
   analyzer/              笔记拆解：规则版和 OpenAI-compatible LLM 版
-  scorer/                选题评分：规则版评分器
+  scorer/                选题评分：规则版和 OpenAI-compatible LLM 版
   draftgen/              内容草稿生成：规则版和 OpenAI-compatible LLM 版
   reviewer/              复盘学习：规则版表现评分器
   storage/               SQLite + WAL 表结构和持久化
@@ -218,6 +218,11 @@ collected_items -> note_analyses
 ```text
 note_analyses -> topic_candidates
 ```
+
+当前支持两种 scorer：
+
+- `rule`：规则版，默认启用，用于验证排序链路
+- `llm`：OpenAI-compatible 大模型版，用于真实选题评分和理由生成
 
 当前已经增加第一版内容生成模块：
 

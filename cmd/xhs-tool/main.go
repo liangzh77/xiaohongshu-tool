@@ -72,7 +72,7 @@ func usage() error {
   xhs-tool login qrcode --cookies data/cookies.json --out data/login-qrcode.html
   xhs-tool analyze item --db data/xhs.db --id 123
   xhs-tool analyze batch --db data/xhs.db --limit 20
-  xhs-tool score batch --db data/xhs.db --limit 20
+  xhs-tool score batch --db data/xhs.db --limit 20 --engine rule
   xhs-tool score list --db data/xhs.db --limit 20
   xhs-tool draft batch --db data/xhs.db --limit 20 --engine rule
   xhs-tool draft list --db data/xhs.db --limit 20
@@ -626,6 +626,11 @@ func scoreBatch(args []string) error {
 	fs := flag.NewFlagSet("score batch", flag.ExitOnError)
 	dbPath := fs.String("db", "data/xhs.db", "SQLite database path")
 	limit := fs.Int("limit", 20, "maximum analyses to score")
+	engine := fs.String("engine", "rule", "scoring engine: rule or llm")
+	llmBaseURL := fs.String("llm-base-url", getenvDefault("XHS_LLM_BASE_URL", "https://api.openai.com/v1"), "OpenAI-compatible base URL")
+	llmAPIKey := fs.String("llm-api-key", os.Getenv("XHS_LLM_API_KEY"), "LLM API key")
+	llmModel := fs.String("llm-model", os.Getenv("XHS_LLM_MODEL"), "LLM model")
+	timeout := fs.Duration("timeout", 5*time.Minute, "batch scoring timeout")
 	asJSON := fs.Bool("json", false, "print JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -639,10 +644,20 @@ func scoreBatch(args []string) error {
 	if err != nil {
 		return err
 	}
-	ruleScorer := scorer.NewRuleScorer()
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	config := scoreConfig{
+		Engine:     *engine,
+		LLMBaseURL: *llmBaseURL,
+		LLMAPIKey:  *llmAPIKey,
+		LLMModel:   *llmModel,
+	}
 	candidates := make([]storage.TopicCandidate, 0, len(analyses))
 	for _, analysis := range analyses {
-		candidate := ruleScorer.Score(analysis)
+		candidate, err := scoreAnalysis(ctx, analysis, config)
+		if err != nil {
+			return err
+		}
 		id, err := db.SaveTopicCandidate(context.Background(), candidate)
 		if err != nil {
 			return err
@@ -658,6 +673,28 @@ func scoreBatch(args []string) error {
 		fmt.Println()
 	}
 	return nil
+}
+
+type scoreConfig struct {
+	Engine     string
+	LLMBaseURL string
+	LLMAPIKey  string
+	LLMModel   string
+}
+
+func scoreAnalysis(ctx context.Context, analysis storage.NoteAnalysis, config scoreConfig) (storage.TopicCandidate, error) {
+	switch config.Engine {
+	case "rule":
+		return scorer.NewRuleScorer().Score(analysis), nil
+	case "llm":
+		return scorer.LLMScorer{
+			BaseURL: config.LLMBaseURL,
+			APIKey:  config.LLMAPIKey,
+			Model:   config.LLMModel,
+		}.Score(ctx, analysis)
+	default:
+		return storage.TopicCandidate{}, fmt.Errorf("unsupported scoring engine %q", config.Engine)
+	}
 }
 
 func scoreList(args []string) error {

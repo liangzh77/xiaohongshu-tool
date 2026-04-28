@@ -26,7 +26,7 @@
 - [x] 实现登录二维码和 cookies 保存流程
 - [x] 实现采集结果查看命令
 - [x] 实现笔记拆解模块，支持规则版和 OpenAI-compatible LLM 版
-- [x] 实现选题评分模块，支持规则版评分和排序
+- [x] 实现选题评分模块，支持规则版和 OpenAI-compatible LLM 版评分排序
 - [x] 实现内容草稿生成模块，支持规则版草稿
 - [x] 实现复盘学习数据骨架，支持发布记录、表现快照和规则版复盘评分
 - [x] 推送代码到 GitHub
@@ -152,7 +152,7 @@ xhs-tool run list --db data/xhs.db --limit 20
 - 每个分数都有解释
 - 可以过滤低质量或高风险选题
 
-状态：已完成第一版规则评分骨架。当前支持 `score batch` 和 `score list`，可生成 `topic_candidates` 并按总分排序。后续需要用真实运营反馈校准权重，或接入 LLM scorer。
+状态：已完成第一版规则评分骨架，并已接入 OpenAI-compatible LLM scorer。当前支持 `score batch --engine rule|llm` 和 `score list`，可生成 `topic_candidates` 并按总分排序。后续需要用真实运营反馈校准权重和提示词。
 
 ### 7. 实现内容草稿生成模块
 
@@ -227,7 +227,7 @@ go run ./cmd/xhs-tool collect once --db data/xhs.db --command "go run ./cmd/xhs-
 
 ```bash
 go run ./cmd/xhs-tool analyze batch --db data/xhs.db --limit 20 --engine rule
-go run ./cmd/xhs-tool score batch --db data/xhs.db --limit 20
+go run ./cmd/xhs-tool score batch --db data/xhs.db --limit 20 --engine rule
 go run ./cmd/xhs-tool draft batch --db data/xhs.db --limit 20
 go run ./cmd/xhs-tool publish add --db data/xhs.db --draft-id 1 --url "https://www.xiaohongshu.com/explore/..."
 go run ./cmd/xhs-tool review add --db data/xhs.db --publish-id 1 --views 1000 --likes 80 --collects 20 --comments 5 --follows 3
