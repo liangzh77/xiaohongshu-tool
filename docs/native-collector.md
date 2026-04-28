@@ -46,6 +46,22 @@ export ROD_BROWSER_BIN=/usr/bin/chromium
 export COOKIES_PATH=data/cookies.json
 ```
 
+## 登录和 cookies
+
+检查当前 cookies 是否可用：
+
+```bash
+go run ./cmd/xhs-tool login status --cookies data/cookies.json
+```
+
+生成登录二维码并等待扫码：
+
+```bash
+go run ./cmd/xhs-tool login qrcode --cookies data/cookies.json --out data/login-qrcode.html --wait 4m
+```
+
+命令会生成 `data/login-qrcode.html`。打开该文件，用小红书 App 扫码。扫码成功后，cookies 会保存到 `data/cookies.json`。
+
 ## 单独测试
 
 关键词搜索，默认会继续拉详情补全文案：

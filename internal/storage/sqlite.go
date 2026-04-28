@@ -40,6 +40,25 @@ type Item struct {
 	Raw          map[string]any `json:"raw"`
 }
 
+type StoredItem struct {
+	ID         int64  `json:"id"`
+	TargetID   int64  `json:"target_id"`
+	TargetName string `json:"target_name"`
+	Item
+	CapturedAt string `json:"captured_at"`
+}
+
+type Run struct {
+	ID         int64  `json:"id"`
+	TargetID   int64  `json:"target_id"`
+	TargetName string `json:"target_name"`
+	Mode       string `json:"mode"`
+	Status     string `json:"status"`
+	Message    string `json:"message"`
+	StartedAt  string `json:"started_at"`
+	FinishedAt string `json:"finished_at"`
+}
+
 func Open(path string) (*DB, error) {
 	if dir := filepath.Dir(path); dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -186,6 +205,109 @@ func (d *DB) SaveItems(ctx context.Context, targetID int64, items []Item, captur
 		}
 	}
 	return tx.Commit()
+}
+
+func (d *DB) ListItems(ctx context.Context, limit int) ([]StoredItem, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT i.id, i.target_id, t.name, i.external_id, i.url, i.author_name, i.title, i.body,
+		       i.tags_json, i.like_count, i.collect_count, i.comment_count, i.published_at, i.raw_json, i.captured_at
+		FROM collected_items i
+		JOIN collector_targets t ON t.id = i.target_id
+		ORDER BY i.captured_at DESC, i.id DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []StoredItem
+	for rows.Next() {
+		item, err := scanStoredItem(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (d *DB) GetItem(ctx context.Context, id int64) (StoredItem, error) {
+	row := d.db.QueryRowContext(ctx, `
+		SELECT i.id, i.target_id, t.name, i.external_id, i.url, i.author_name, i.title, i.body,
+		       i.tags_json, i.like_count, i.collect_count, i.comment_count, i.published_at, i.raw_json, i.captured_at
+		FROM collected_items i
+		JOIN collector_targets t ON t.id = i.target_id
+		WHERE i.id = ?`, id)
+	return scanStoredItem(row)
+}
+
+func (d *DB) ListRuns(ctx context.Context, limit int) ([]Run, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT r.id, r.target_id, t.name, r.mode, r.status, r.message, r.started_at, COALESCE(r.finished_at, '')
+		FROM collection_runs r
+		JOIN collector_targets t ON t.id = r.target_id
+		ORDER BY r.started_at DESC, r.id DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var runs []Run
+	for rows.Next() {
+		var run Run
+		if err := rows.Scan(&run.ID, &run.TargetID, &run.TargetName, &run.Mode, &run.Status, &run.Message, &run.StartedAt, &run.FinishedAt); err != nil {
+			return nil, err
+		}
+		runs = append(runs, run)
+	}
+	return runs, rows.Err()
+}
+
+type itemScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanStoredItem(scanner itemScanner) (StoredItem, error) {
+	var item StoredItem
+	var tagsJSON string
+	var rawJSON string
+	if err := scanner.Scan(
+		&item.ID,
+		&item.TargetID,
+		&item.TargetName,
+		&item.ExternalID,
+		&item.URL,
+		&item.AuthorName,
+		&item.Title,
+		&item.Body,
+		&tagsJSON,
+		&item.LikeCount,
+		&item.CollectCount,
+		&item.CommentCount,
+		&item.PublishedAt,
+		&rawJSON,
+		&item.CapturedAt,
+	); err != nil {
+		return StoredItem{}, err
+	}
+	if tagsJSON != "" {
+		_ = json.Unmarshal([]byte(tagsJSON), &item.Tags)
+	}
+	if rawJSON != "" {
+		_ = json.Unmarshal([]byte(rawJSON), &item.Raw)
+	}
+	if item.Tags == nil {
+		item.Tags = []string{}
+	}
+	if item.Raw == nil {
+		item.Raw = map[string]any{}
+	}
+	return item, nil
 }
 
 const schema = `

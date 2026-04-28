@@ -4,8 +4,6 @@ import (
 	"context"
 	"sync"
 
-	"github.com/xpzouying/headless_browser"
-	"github.com/xpzouying/xiaohongshu-mcp/browser"
 	"github.com/xpzouying/xiaohongshu-mcp/xiaohongshu"
 
 	"xiaohongshu-tool/internal/storage"
@@ -16,7 +14,7 @@ type Collector struct {
 	binPath  string
 
 	mu      sync.Mutex
-	browser *headless_browser.Browser
+	browser *browserInstance
 }
 
 type SearchOptions struct {
@@ -50,7 +48,11 @@ func (c *Collector) Search(ctx context.Context, opts SearchOptions) ([]storage.I
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	page := c.getBrowserLocked().NewPage()
+	b, err := c.getBrowserLocked()
+	if err != nil {
+		return nil, err
+	}
+	page := b.NewPage()
 	defer page.Close()
 
 	feeds, err := xiaohongshu.NewSearchAction(page).Search(ctx, opts.Keyword)
@@ -85,7 +87,11 @@ func (c *Collector) FeedDetail(ctx context.Context, feedID, xsecToken string, lo
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	page := c.getBrowserLocked().NewPage()
+	b, err := c.getBrowserLocked()
+	if err != nil {
+		return storage.Item{}, err
+	}
+	page := b.NewPage()
 	defer page.Close()
 
 	detail, err := xiaohongshu.NewFeedDetailAction(page).GetFeedDetailWithConfig(
@@ -101,14 +107,14 @@ func (c *Collector) FeedDetail(ctx context.Context, feedID, xsecToken string, lo
 	return ItemFromDetail(detail), nil
 }
 
-func (c *Collector) getBrowserLocked() *headless_browser.Browser {
+func (c *Collector) getBrowserLocked() (*browserInstance, error) {
 	if c.browser != nil {
-		return c.browser
+		return c.browser, nil
 	}
-	options := []browser.Option{}
-	if c.binPath != "" {
-		options = append(options, browser.WithBinPath(c.binPath))
+	b, err := newBrowserInstance(c.headless, c.binPath, "")
+	if err != nil {
+		return nil, err
 	}
-	c.browser = browser.NewBrowser(c.headless, options...)
-	return c.browser
+	c.browser = b
+	return c.browser, nil
 }
