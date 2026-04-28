@@ -17,13 +17,13 @@ type DB struct {
 }
 
 type Target struct {
-	ID                 int64
-	Kind               string
-	Name               string
-	URL                string
-	Keyword            string
-	MinIntervalSeconds int
-	Enabled            bool
+	ID                 int64  `json:"id"`
+	Kind               string `json:"kind"`
+	Name               string `json:"name"`
+	URL                string `json:"url"`
+	Keyword            string `json:"keyword"`
+	MinIntervalSeconds int    `json:"min_interval_seconds"`
+	Enabled            bool   `json:"enabled"`
 }
 
 type Item struct {
@@ -196,6 +196,30 @@ func (d *DB) AddTarget(ctx context.Context, t Target) (int64, error) {
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+func (d *DB) ListTargets(ctx context.Context, limit int) ([]Target, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT id, kind, name, url, keyword, min_interval_seconds, enabled
+		FROM collector_targets
+		ORDER BY id DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var targets []Target
+	for rows.Next() {
+		var t Target
+		if err := rows.Scan(&t.ID, &t.Kind, &t.Name, &t.URL, &t.Keyword, &t.MinIntervalSeconds, &t.Enabled); err != nil {
+			return nil, err
+		}
+		targets = append(targets, t)
+	}
+	return targets, rows.Err()
 }
 
 func (d *DB) DueTargets(ctx context.Context, now time.Time, limit int) ([]Target, error) {

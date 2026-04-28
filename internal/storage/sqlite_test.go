@@ -63,6 +63,38 @@ func TestDueTargetsHonorsMinimumInterval(t *testing.T) {
 	}
 }
 
+func TestListTargets(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = db.AddTarget(ctx, Target{Kind: "keyword", Name: "AI", Keyword: "AI工具", MinIntervalSeconds: 300, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.AddTarget(ctx, Target{Kind: "keyword", Name: "运营", Keyword: "小红书运营", MinIntervalSeconds: 600, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	targets, err := db.ListTargets(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 2 {
+		t.Fatalf("expected two targets, got %d", len(targets))
+	}
+	if targets[0].Name != "运营" || targets[1].Name != "AI" {
+		t.Fatalf("unexpected target order: %#v", targets)
+	}
+}
+
 func TestSaveItemsUpsertsByTargetAndExternalID(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(filepath.Join(t.TempDir(), "test.db"))

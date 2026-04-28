@@ -3,7 +3,9 @@ data/
 *.db-shm
 *.db-wal
 *.log
+.playwright-mcp/
 /*.exe
 /xhs-tool
 /xhs-mcp-adapter
 /xhs-native-collector
+/xhs-web

@@ -29,6 +29,8 @@
 - [x] 实现选题评分模块，支持规则版和 OpenAI-compatible LLM 版评分排序
 - [x] 实现内容草稿生成模块，支持规则版草稿
 - [x] 实现复盘学习数据骨架，支持发布记录、表现快照和规则版复盘评分
+- [x] 实现轻量 Web 工作台，后端和前端都由 Go 单二进制提供
+- [x] 接入密钥分发服务配置，页面填写服务地址、用户名、密码，后端换取 LLM Key
 - [x] 推送代码到 GitHub
 
 ## 进行中
@@ -208,7 +210,13 @@ go test ./...
 构建 CLI：
 
 ```bash
-go build ./cmd/xhs-tool ./cmd/xhs-mcp-adapter ./cmd/xhs-native-collector
+go build ./cmd/xhs-tool ./cmd/xhs-mcp-adapter ./cmd/xhs-native-collector ./cmd/xhs-web
+```
+
+启动 Web 工作台：
+
+```bash
+go run ./cmd/xhs-web --addr :8080 --db data/xhs.db
 ```
 
 运行原生采集器：

@@ -21,14 +21,17 @@ cmd/
   xhs-tool/              主命令：采集目标、调度、SQLite 写入
   xhs-mcp-adapter/       连接已运行的 xiaohongshu-mcp HTTP 服务
   xhs-native-collector/  直接复用 xiaohongshu-mcp 的 Go 包进行采集
+  xhs-web/               轻量 Web 工作台，提供后端 API 和内嵌前端
 
 internal/
   collector/             执行外部采集命令，并保存结果
   analyzer/              笔记拆解：规则版和 OpenAI-compatible LLM 版
   scorer/                选题评分：规则版和 OpenAI-compatible LLM 版
   draftgen/              内容草稿生成：规则版和 OpenAI-compatible LLM 版
+  keydist/               密钥分发服务客户端
   reviewer/              复盘学习：规则版表现评分器
   storage/               SQLite + WAL 表结构和持久化
+  web/                   Web API 和内嵌前端
   xhsmcp/                xiaohongshu-mcp HTTP API 客户端
   xhsnative/             原生源码级采集器封装和数据映射
 ```
@@ -180,13 +183,24 @@ export COOKIES_PATH=data/cookies.json
 
 ### 暂不做 Web UI
 
-状态：已接受。
+状态：已被后续决策替换。
 
-原因：
+原原因：
 
 - 当前最大风险是输出质量，不是界面
 - CLI 更适合快速测试和跑夜间任务
 - Web UI 应该等模块契约稳定后再做
+
+### 增加轻量 Web 工作台
+
+状态：已接受。
+
+原因：
+
+- 分步 CLI 测试对实际使用偏麻烦
+- 当前模块契约已经基本成型，可以封装成工作台
+- 仍然保持 Go + SQLite + WAL，不引入 Node、Docker 或单独前端构建链
+- 后端和前端由 `xhs-web` 单二进制提供，适合 2GB 服务器
 
 ## 当前风险
 
