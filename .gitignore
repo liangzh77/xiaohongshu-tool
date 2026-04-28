@@ -3,6 +3,7 @@ data/
 *.db-shm
 *.db-wal
 *.log
-*.exe
-xhs-tool
-xhs-mcp-adapter
+/*.exe
+/xhs-tool
+/xhs-mcp-adapter
+/xhs-native-collector

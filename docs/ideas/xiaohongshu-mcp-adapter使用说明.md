@@ -49,6 +49,8 @@ curl http://localhost:18060/health
 curl http://localhost:18060/api/v1/login/status
 ```
 
+后续如果选择源码级集成，可以去掉 HTTP sidecar，直接在本项目中调用上游 `xiaohongshu` 和 `browser` 包。
+
 ## 单独测试适配器
 
 关键词搜索，默认会对搜索结果继续拉详情，以补全文案：
