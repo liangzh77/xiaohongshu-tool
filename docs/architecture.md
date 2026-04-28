@@ -26,7 +26,7 @@ internal/
   collector/             执行外部采集命令，并保存结果
   analyzer/              笔记拆解：规则版和 OpenAI-compatible LLM 版
   scorer/                选题评分：规则版评分器
-  draftgen/              内容草稿生成：规则版生成器
+  draftgen/              内容草稿生成：规则版和 OpenAI-compatible LLM 版
   reviewer/              复盘学习：规则版表现评分器
   storage/               SQLite + WAL 表结构和持久化
   xhsmcp/                xiaohongshu-mcp HTTP API 客户端
@@ -224,6 +224,11 @@ note_analyses -> topic_candidates
 ```text
 topic_candidates -> generated_drafts
 ```
+
+当前支持两种 draft generator：
+
+- `rule`：规则版，默认启用，用于验证数据流
+- `llm`：OpenAI-compatible 大模型版，用于真实草稿生成
 
 当前已经增加第一版复盘学习数据骨架：
 

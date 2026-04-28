@@ -168,7 +168,7 @@ xhs-tool run list --db data/xhs.db --limit 20
 - 标签建议
 - 风险提示
 
-状态：已完成第一版规则生成骨架。当前支持 `draft batch` 和 `draft list`，写入 `generated_drafts`。后续需要接入 LLM 生成器，并加入人工评分字段。
+状态：已完成第一版规则生成骨架，并已接入 OpenAI-compatible LLM 生成器。当前支持 `draft batch --engine rule|llm` 和 `draft list`，写入 `generated_drafts`。后续需要加入人工评分字段，并用真实样本评估草稿可用率。
 
 ### 8. 实现复盘学习数据骨架
 

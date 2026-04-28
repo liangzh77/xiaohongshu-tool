@@ -74,7 +74,7 @@ func usage() error {
   xhs-tool analyze batch --db data/xhs.db --limit 20
   xhs-tool score batch --db data/xhs.db --limit 20
   xhs-tool score list --db data/xhs.db --limit 20
-  xhs-tool draft batch --db data/xhs.db --limit 20
+  xhs-tool draft batch --db data/xhs.db --limit 20 --engine rule
   xhs-tool draft list --db data/xhs.db --limit 20
   xhs-tool publish add --db data/xhs.db --draft-id 1 --url "https://www.xiaohongshu.com/explore/..."
   xhs-tool publish list --db data/xhs.db --limit 20
@@ -723,6 +723,11 @@ func draftBatch(args []string) error {
 	fs := flag.NewFlagSet("draft batch", flag.ExitOnError)
 	dbPath := fs.String("db", "data/xhs.db", "SQLite database path")
 	limit := fs.Int("limit", 20, "maximum candidates to draft")
+	engine := fs.String("engine", "rule", "draft engine: rule or llm")
+	llmBaseURL := fs.String("llm-base-url", getenvDefault("XHS_LLM_BASE_URL", "https://api.openai.com/v1"), "OpenAI-compatible base URL")
+	llmAPIKey := fs.String("llm-api-key", os.Getenv("XHS_LLM_API_KEY"), "LLM API key")
+	llmModel := fs.String("llm-model", os.Getenv("XHS_LLM_MODEL"), "LLM model")
+	timeout := fs.Duration("timeout", 5*time.Minute, "batch draft timeout")
 	asJSON := fs.Bool("json", false, "print JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -736,10 +741,20 @@ func draftBatch(args []string) error {
 	if err != nil {
 		return err
 	}
-	generator := draftgen.NewRuleGenerator()
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	config := draftConfig{
+		Engine:     *engine,
+		LLMBaseURL: *llmBaseURL,
+		LLMAPIKey:  *llmAPIKey,
+		LLMModel:   *llmModel,
+	}
 	drafts := make([]storage.GeneratedDraft, 0, len(candidates))
 	for _, candidate := range candidates {
-		draft := generator.Generate(candidate)
+		draft, err := generateDraft(ctx, candidate, config)
+		if err != nil {
+			return err
+		}
 		id, err := db.SaveGeneratedDraft(context.Background(), draft)
 		if err != nil {
 			return err
@@ -755,6 +770,28 @@ func draftBatch(args []string) error {
 		fmt.Println()
 	}
 	return nil
+}
+
+type draftConfig struct {
+	Engine     string
+	LLMBaseURL string
+	LLMAPIKey  string
+	LLMModel   string
+}
+
+func generateDraft(ctx context.Context, candidate storage.TopicCandidate, config draftConfig) (storage.GeneratedDraft, error) {
+	switch config.Engine {
+	case "rule":
+		return draftgen.NewRuleGenerator().Generate(candidate), nil
+	case "llm":
+		return draftgen.LLMGenerator{
+			BaseURL: config.LLMBaseURL,
+			APIKey:  config.LLMAPIKey,
+			Model:   config.LLMModel,
+		}.Generate(ctx, candidate)
+	default:
+		return storage.GeneratedDraft{}, fmt.Errorf("unsupported draft engine %q", config.Engine)
+	}
 }
 
 func draftList(args []string) error {

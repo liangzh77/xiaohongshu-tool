@@ -143,10 +143,20 @@ go run ./cmd/xhs-tool score list --db data/xhs.db --limit 20
 
 ## 内容草稿生成
 
-基于候选选题生成可供运营人员审核的草稿：
+基于候选选题生成可供运营人员审核的草稿。规则版适合验证链路：
 
 ```bash
-go run ./cmd/xhs-tool draft batch --db data/xhs.db --limit 20
+go run ./cmd/xhs-tool draft batch --db data/xhs.db --limit 20 --engine rule
+```
+
+大模型版使用 OpenAI-compatible API：
+
+```bash
+export XHS_LLM_BASE_URL=https://api.openai.com/v1
+export XHS_LLM_API_KEY=your_api_key
+export XHS_LLM_MODEL=your_model
+
+go run ./cmd/xhs-tool draft batch --db data/xhs.db --limit 20 --engine llm
 ```
 
 查看草稿：
@@ -155,7 +165,7 @@ go run ./cmd/xhs-tool draft batch --db data/xhs.db --limit 20
 go run ./cmd/xhs-tool draft list --db data/xhs.db --limit 20
 ```
 
-当前是规则生成器，输出标题备选、开头、正文、封面文案、图片脚本、标签和风险提示。它用于验证链路，不代表最终文案质量。真实使用阶段需要接入 LLM 生成器，并由运营人员做事实核查和表达调整。
+当前输出标题备选、开头、正文、封面文案、图片脚本、标签和风险提示。真实使用阶段需要由运营人员做事实核查和表达调整。
 
 ## 复盘记录
 
