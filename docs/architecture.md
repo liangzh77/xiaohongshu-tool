@@ -24,6 +24,10 @@ cmd/
 
 internal/
   collector/             执行外部采集命令，并保存结果
+  analyzer/              笔记拆解：规则版和 OpenAI-compatible LLM 版
+  scorer/                选题评分：规则版评分器
+  draftgen/              内容草稿生成：规则版生成器
+  reviewer/              复盘学习：规则版表现评分器
   storage/               SQLite + WAL 表结构和持久化
   xhsmcp/                xiaohongshu-mcp HTTP API 客户端
   xhsnative/             原生源码级采集器封装和数据映射
@@ -49,7 +53,16 @@ JSON: { "items": [...] }
 SQLite collected_items
       |
       v
-后续模块：笔记拆解 -> 选题评分 -> 内容生成 -> 复盘学习
+note_analyses
+      |
+      v
+topic_candidates
+      |
+      v
+generated_drafts
+      |
+      v
+publish_records -> performance_snapshots -> performance_reports
 ```
 
 采集命令被设计成外部命令，是为了让调度和存储保持稳定，同时允许以后替换不同的数据来源：
@@ -67,16 +80,14 @@ SQLite collected_items
 - `collector_targets`：采集目标，例如关键词、笔记 ID
 - `collection_runs`：采集运行记录、状态、时间、错误信息
 - `collected_items`：标准化后的笔记/卡片数据，按 `target_id + external_id` 去重
-
-这些表足够支撑采集阶段。后续阶段应该增加独立表，不要把所有结果都塞进 `collected_items`。
-
-后续可能增加：
-
 - `note_analyses`：笔记拆解结果
 - `topic_candidates`：候选选题和评分
 - `generated_drafts`：生成的内容草稿
 - `publish_records`：人工发布记录
 - `performance_snapshots`：发布后的表现数据快照
+- `performance_reports`：基于表现快照生成的复盘评分和调整建议
+
+设计原则：每个阶段写自己的独立表，不把拆解、评分、生成、复盘结果塞回 `collected_items`。这样每一步都能单独测试和评估，也方便以后替换规则版实现为 LLM 或更复杂的学习算法。
 
 ## 采集策略
 
@@ -179,18 +190,45 @@ export COOKIES_PATH=data/cookies.json
 
 ## 当前风险
 
-- 登录和 cookies 流程还没有完全由本项目接管。
+- 登录和 cookies 流程已经有基础版本，但还需要在 Linux 服务器复测。
 - 原生采集器依赖上游包的行为和页面解析逻辑。
 - Headless Chrome 在 2GB 服务器上仍可能偏重。
-- 笔记拆解、选题评分、内容生成、复盘学习模块还没实现。
+- 笔记拆解已有规则版和 LLM 版入口，但输出质量还需要真实样本评估。
+- 选题评分已有规则版入口，但权重还需要真实运营反馈校准。
+- 内容生成和复盘学习已有第一版数据流骨架，但当前仍是规则/人工记录版，需要用真实样本验证质量。
 - 当前还没有正式的 schema migration 系统，只有幂等建表。
 
 ## 下一步架构任务
 
-下一阶段建议增加笔记拆解模块：
+当前已经增加第一版笔记拆解模块：
 
 ```text
 collected_items -> note_analyses
 ```
 
-该模块应该从 SQLite 读取采集到的笔记，调用大模型生成结构化拆解结果，校验 JSON 输出，再写回 SQLite。
+该模块从 SQLite 读取采集到的笔记，生成结构化拆解结果，再写回 SQLite。
+
+当前支持两种 analyzer：
+
+- `rule`：规则版，默认启用，用于验证数据流
+- `llm`：OpenAI-compatible 大模型版，用于真实内容拆解
+
+当前也已经增加第一版选题评分模块：
+
+```text
+note_analyses -> topic_candidates
+```
+
+当前已经增加第一版内容生成模块：
+
+```text
+topic_candidates -> generated_drafts
+```
+
+当前已经增加第一版复盘学习数据骨架：
+
+```text
+generated_drafts -> publish_records -> performance_snapshots -> performance_reports
+```
+
+下一步需要用真实样本评估 LLM 拆解质量、规则评分质量和草稿可用性，并根据发布表现优化 prompt、字段和评分权重。

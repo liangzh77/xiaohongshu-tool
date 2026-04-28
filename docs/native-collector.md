@@ -101,6 +101,102 @@ go run ./cmd/xhs-tool collect once --db data/xhs.db --command "go run ./cmd/xhs-
 go run ./cmd/xhs-tool collect daemon --db data/xhs.db --command "go run ./cmd/xhs-native-collector --limit 3" --every 5m --limit 1
 ```
 
+## 笔记拆解
+
+规则版拆解，适合验证数据流：
+
+```bash
+go run ./cmd/xhs-tool analyze batch --db data/xhs.db --limit 3 --engine rule
+```
+
+大模型拆解，使用 OpenAI-compatible API：
+
+```bash
+export XHS_LLM_BASE_URL=https://api.openai.com/v1
+export XHS_LLM_API_KEY=your_api_key
+export XHS_LLM_MODEL=your_model
+
+go run ./cmd/xhs-tool analyze batch --db data/xhs.db --limit 3 --engine llm
+```
+
+也可以直接传参数：
+
+```bash
+go run ./cmd/xhs-tool analyze item --db data/xhs.db --id 1 --engine llm --llm-model your_model --llm-api-key your_api_key
+```
+
+## 选题评分
+
+基于拆解结果生成候选选题和评分：
+
+```bash
+go run ./cmd/xhs-tool score batch --db data/xhs.db --limit 20
+```
+
+查看评分结果：
+
+```bash
+go run ./cmd/xhs-tool score list --db data/xhs.db --limit 20
+```
+
+当前是规则评分器，用于验证链路和解释维度。真实运营阶段需要根据人工反馈和发布表现校准权重。
+
+## 内容草稿生成
+
+基于候选选题生成可供运营人员审核的草稿：
+
+```bash
+go run ./cmd/xhs-tool draft batch --db data/xhs.db --limit 20
+```
+
+查看草稿：
+
+```bash
+go run ./cmd/xhs-tool draft list --db data/xhs.db --limit 20
+```
+
+当前是规则生成器，输出标题备选、开头、正文、封面文案、图片脚本、标签和风险提示。它用于验证链路，不代表最终文案质量。真实使用阶段需要接入 LLM 生成器，并由运营人员做事实核查和表达调整。
+
+## 复盘记录
+
+本项目不自动发布。运营人员人工发布后，可以记录发布链接：
+
+```bash
+go run ./cmd/xhs-tool publish add --db data/xhs.db --draft-id 1 --url "https://www.xiaohongshu.com/explore/..." --operator "editor"
+```
+
+查看发布记录：
+
+```bash
+go run ./cmd/xhs-tool publish list --db data/xhs.db --limit 20
+```
+
+记录发布后的表现快照：
+
+```bash
+go run ./cmd/xhs-tool review add --db data/xhs.db --publish-id 1 --views 1000 --likes 80 --collects 20 --comments 5 --follows 3
+```
+
+查看表现快照：
+
+```bash
+go run ./cmd/xhs-tool review list --db data/xhs.db --limit 20
+```
+
+生成规则版复盘评分：
+
+```bash
+go run ./cmd/xhs-tool review score --db data/xhs.db --limit 20
+```
+
+查看复盘报告：
+
+```bash
+go run ./cmd/xhs-tool review report --db data/xhs.db --limit 20
+```
+
+这些数据后续用于校准选题评分、总结可复用模式，并筛掉实际表现差的选题类型。当前评分是规则版，重点是先打通数据闭环，不代表最终运营判断。
+
 ## 当前开发注意
 
 `go.mod` 当前固定到上游 commit：

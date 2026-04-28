@@ -2,15 +2,16 @@
 
 ## 当前状态
 
-项目已经完成第一版数据采集原型：
+项目已经完成第一版端到端 CLI 骨架：
 
 - 已初始化 Go 项目
 - 已加入 SQLite + WAL 存储
 - 已加入采集调度 CLI
 - 已加入 `xiaohongshu-mcp` HTTP adapter
 - 已加入原生源码级采集器
-- 已加入 storage 和 mapping 的基础测试
-- 已补充产品方向、采集调研、原生采集器、adapter 使用说明等文档
+- 已加入登录、采集结果查看、笔记拆解、选题评分、草稿生成、复盘记录命令
+- 已加入 storage、native mapping、analyzer、scorer、draftgen 的基础测试
+- 已补充产品方向、采集调研、原生采集器、adapter 使用说明和任务记录文档
 
 ## 已完成
 
@@ -22,11 +23,17 @@
 - [x] 实现 `xhs-mcp-adapter`，作为 HTTP API 备用方案
 - [x] 实现 `xhs-native-collector`，作为源码级原生采集方案
 - [x] 增加 storage 和 native mapping 测试
+- [x] 实现登录二维码和 cookies 保存流程
+- [x] 实现采集结果查看命令
+- [x] 实现笔记拆解模块，支持规则版和 OpenAI-compatible LLM 版
+- [x] 实现选题评分模块，支持规则版评分和排序
+- [x] 实现内容草稿生成模块，支持规则版草稿
+- [x] 实现复盘学习数据骨架，支持发布记录、表现快照和规则版复盘评分
 - [x] 推送代码到 GitHub
 
 ## 进行中
 
-- [ ] 在真实机器上使用 cookies + Chromium 跑通原生采集
+- [x] 在真实机器上使用 cookies + Chromium 跑通原生采集
 
 ## 下一批任务
 
@@ -67,6 +74,20 @@
 - 登录失效时能给出清晰错误
 
 状态：已实现，并已在 Windows 本机完成扫码保存 cookies 验证。后续需要在 Linux 服务器复测。
+
+### 6. Windows 本机原生采集验证
+
+目标：验证不启动 `xiaohongshu-mcp.exe`，直接使用本项目原生采集器完成采集。
+
+结果：
+
+- `login status` 返回 `logged_in: true`
+- `xhs-native-collector --details=false` 可以返回搜索卡片
+- `xhs-tool collect once` 可以写入 SQLite
+- `xhs-tool item list` 可以查看入库结果
+- `xhs-tool run list` 可以查看运行记录
+
+状态：已完成。
 
 ### 3. 增加采集结果查看命令
 
@@ -110,6 +131,8 @@ xhs-tool run list --db data/xhs.db --limit 20
 - 输出符合 JSON schema
 - 支持单条运行和批量运行
 
+状态：已完成第一版骨架，并已接入 OpenAI-compatible LLM analyzer。当前默认仍使用规则版 analyzer；通过 `--engine llm` 可启用大模型拆解。后续需要用真实模型和更多样本评估输出质量。
+
 ### 5. 实现选题评分模块
 
 目标：把拆解后的笔记沉淀成可执行选题，并排序。
@@ -128,6 +151,41 @@ xhs-tool run list --db data/xhs.db --limit 20
 - 生成排序后的候选选题
 - 每个分数都有解释
 - 可以过滤低质量或高风险选题
+
+状态：已完成第一版规则评分骨架。当前支持 `score batch` 和 `score list`，可生成 `topic_candidates` 并按总分排序。后续需要用真实运营反馈校准权重，或接入 LLM scorer。
+
+### 7. 实现内容草稿生成模块
+
+目标：把候选选题变成可供运营人员快速审核和改写的草稿。
+
+当前输出：
+
+- 标题备选
+- 开头
+- 正文结构
+- 封面文案
+- 图片脚本
+- 标签建议
+- 风险提示
+
+状态：已完成第一版规则生成骨架。当前支持 `draft batch` 和 `draft list`，写入 `generated_drafts`。后续需要接入 LLM 生成器，并加入人工评分字段。
+
+### 8. 实现复盘学习数据骨架
+
+目标：把人工发布和发布后表现记录下来，形成后续校准评分权重和 prompt 的数据基础。
+
+当前命令：
+
+```bash
+go run ./cmd/xhs-tool publish add --db data/xhs.db --draft-id 1 --url "https://www.xiaohongshu.com/explore/..." --operator "editor"
+go run ./cmd/xhs-tool publish list --db data/xhs.db --limit 20
+go run ./cmd/xhs-tool review add --db data/xhs.db --publish-id 1 --views 1000 --likes 80 --collects 20 --comments 5 --follows 3
+go run ./cmd/xhs-tool review list --db data/xhs.db --limit 20
+go run ./cmd/xhs-tool review score --db data/xhs.db --limit 20
+go run ./cmd/xhs-tool review report --db data/xhs.db --limit 20
+```
+
+状态：已完成第一版数据骨架和规则版复盘评分。当前只记录人工发布后的数据，不自动发布、不自动抓取账号后台数据。后续需要做选题反推、权重校准和 LLM 复盘总结。
 
 ## 暂不做
 
@@ -163,4 +221,15 @@ go run ./cmd/xhs-native-collector --kind keyword --keyword "AI工具" --limit 3
 
 ```bash
 go run ./cmd/xhs-tool collect once --db data/xhs.db --command "go run ./cmd/xhs-native-collector --limit 3"
+```
+
+从采集到复盘的本地流程：
+
+```bash
+go run ./cmd/xhs-tool analyze batch --db data/xhs.db --limit 20 --engine rule
+go run ./cmd/xhs-tool score batch --db data/xhs.db --limit 20
+go run ./cmd/xhs-tool draft batch --db data/xhs.db --limit 20
+go run ./cmd/xhs-tool publish add --db data/xhs.db --draft-id 1 --url "https://www.xiaohongshu.com/explore/..."
+go run ./cmd/xhs-tool review add --db data/xhs.db --publish-id 1 --views 1000 --likes 80 --collects 20 --comments 5 --follows 3
+go run ./cmd/xhs-tool review score --db data/xhs.db --limit 20
 ```
