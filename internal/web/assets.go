@@ -121,6 +121,7 @@ const indexHTML = `<!doctype html>
         <div class="field"><label for="keyBase">服务地址</label><input id="keyBase" placeholder="https://distribute-keys.vercel.app"></div>
         <div class="field"><label for="keyUser">用户名</label><input id="keyUser" autocomplete="username"></div>
         <div class="field"><label for="keyPass">密码</label><input id="keyPass" type="password" autocomplete="current-password"></div>
+        <div class="field"><label for="keyName">可用密钥</label><select id="keyName"><option value="">先测试密钥分发服务</option></select></div>
         <button class="primary" id="saveKey">测试并保存</button>
       </div>
       <div class="status" id="keyStatus"></div>
@@ -186,6 +187,7 @@ const indexHTML = `<!doctype html>
       const cfg = state.data.config || {};
       qs("keyBase").value = cfg.key_dist_base_url || qs("keyBase").value;
       qs("keyUser").value = cfg.key_dist_username || qs("keyUser").value;
+      renderKeyOptions(cfg.available_keys || [], cfg.key_name || "");
       render();
     }
 
@@ -208,6 +210,17 @@ const indexHTML = `<!doctype html>
       el.innerHTML = items.map(renderItem).join("");
     }
 
+    function renderKeyOptions(keys, selected) {
+      const select = qs("keyName");
+      const current = selected || select.value;
+      if (!keys || keys.length === 0) {
+        select.innerHTML = '<option value="' + esc(current) + '">' + esc(current || "先测试密钥分发服务") + '</option>';
+        return;
+      }
+      select.innerHTML = keys.map(name => '<option value="' + esc(name) + '">' + esc(name) + '</option>').join("");
+      if (current && keys.includes(current)) select.value = current;
+    }
+
     function esc(value) {
       return String(value ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
     }
@@ -224,8 +237,16 @@ const indexHTML = `<!doctype html>
     qs("saveKey").onclick = async () => {
       try {
         setStatus("keyStatus", "测试中...");
-        await api("/api/key-config/test", { method: "POST", body: JSON.stringify({ base_url: qs("keyBase").value, username: qs("keyUser").value, password: qs("keyPass").value }) });
-        setStatus("keyStatus", "密钥分发服务可用，配置已保存到当前服务进程", "ok");
+        const result = await api("/api/key-config/test", { method: "POST", body: JSON.stringify({ base_url: qs("keyBase").value, username: qs("keyUser").value, password: qs("keyPass").value, key_name: qs("keyName").value }) });
+        renderKeyOptions(result.available_keys || [], result.key_name || "");
+        setStatus("keyStatus", "密钥分发服务可用，当前密钥：" + (result.key_name || "-"), "ok");
+        await refresh();
+      } catch (err) { setStatus("keyStatus", err.message, "error"); }
+    };
+    qs("keyName").onchange = async () => {
+      try {
+        await api("/api/key-config", { method: "POST", body: JSON.stringify({ key_name: qs("keyName").value }) });
+        setStatus("keyStatus", "当前密钥：" + qs("keyName").value, "ok");
         await refresh();
       } catch (err) { setStatus("keyStatus", err.message, "error"); }
     };

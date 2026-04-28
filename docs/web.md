@@ -23,18 +23,23 @@ http://localhost:8080
 - 密钥分发服务
 - 用户名
 - 密码
+- 可用密钥
 
 点击“测试并保存”后，后端会：
 
 1. 调用 `POST /api/auth/login` 获取 JWT token
-2. 调用 `GET /api/keys/{keyName}` 获取真实 API Key
-3. 只在服务端内存中使用该 Key 调用 LLM
+2. 调用 `GET /api/keys` 拉取当前用户可访问的密钥列表
+3. 在页面“可用密钥”下拉菜单中展示密钥名称
+4. 按用户选择调用 `GET /api/keys/{keyName}` 获取真实 API Key
+5. 只在服务端内存中使用该 Key 调用 LLM
 
 默认 keyName 是 `OPENAI_API_KEY`，可以启动时修改：
 
 ```bash
 go run ./cmd/xhs-web --key-name GEMINI_API_KEY
 ```
+
+如果下拉菜单选择了其他密钥，后续拆解、评分、生成草稿的大模型调用会使用当前选择的密钥。真实 Key 不会返回给浏览器。
 
 模型和 OpenAI-compatible 地址仍通过启动参数或环境变量设置：
 

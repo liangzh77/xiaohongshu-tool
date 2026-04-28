@@ -42,9 +42,11 @@ type Server struct {
 }
 
 type KeyConfig struct {
-	BaseURL  string `json:"base_url"`
-	Username string `json:"username"`
-	Password string `json:"password,omitempty"`
+	BaseURL       string   `json:"base_url"`
+	Username      string   `json:"username"`
+	Password      string   `json:"password,omitempty"`
+	KeyName       string   `json:"key_name"`
+	AvailableKeys []string `json:"available_keys,omitempty"`
 }
 
 type StateResponse struct {
@@ -61,12 +63,13 @@ type StateResponse struct {
 }
 
 type PublicConfig struct {
-	LLMBaseURL        string `json:"llm_base_url"`
-	LLMModel          string `json:"llm_model"`
-	KeyName           string `json:"key_name"`
-	KeyDistConfigured bool   `json:"key_dist_configured"`
-	KeyDistBaseURL    string `json:"key_dist_base_url"`
-	KeyDistUsername   string `json:"key_dist_username"`
+	LLMBaseURL        string   `json:"llm_base_url"`
+	LLMModel          string   `json:"llm_model"`
+	KeyName           string   `json:"key_name"`
+	KeyDistConfigured bool     `json:"key_dist_configured"`
+	KeyDistBaseURL    string   `json:"key_dist_base_url"`
+	KeyDistUsername   string   `json:"key_dist_username"`
+	AvailableKeys     []string `json:"available_keys"`
 }
 
 func NewServer(cfg Config) *Server {
@@ -86,6 +89,7 @@ func NewServer(cfg Config) *Server {
 		keyName:      keyName,
 		keyConfig: KeyConfig{
 			BaseURL: cfg.KeyDistBaseURL,
+			KeyName: keyName,
 		},
 	}
 }
@@ -440,6 +444,22 @@ func (s *Server) handleKeyConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
+	current := s.keyConfig
+	if req.Password == "" {
+		req.Password = current.Password
+	}
+	if req.BaseURL == "" {
+		req.BaseURL = current.BaseURL
+	}
+	if req.Username == "" {
+		req.Username = current.Username
+	}
+	if len(req.AvailableKeys) == 0 {
+		req.AvailableKeys = current.AvailableKeys
+	}
+	if req.KeyName != "" {
+		s.keyName = req.KeyName
+	}
 	s.keyConfig = req
 	s.mu.Unlock()
 	writeJSON(w, s.publicConfig())
@@ -463,15 +483,32 @@ func (s *Server) handleKeyConfigTest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	value, err := keydist.Client{BaseURL: req.BaseURL}.GetKey(r.Context(), token, s.keyName)
+	client := keydist.Client{BaseURL: req.BaseURL}
+	keys, err := client.ListKeys(r.Context(), token)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
+	keyNames := make([]string, 0, len(keys))
+	for _, key := range keys {
+		keyNames = append(keyNames, key.KeyName)
+	}
+	keyName := firstNonEmpty(req.KeyName, s.keyName)
+	if len(keyNames) > 0 && !containsString(keyNames, keyName) {
+		keyName = keyNames[0]
+	}
+	value, err := client.GetKey(r.Context(), token, keyName)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	req.KeyName = keyName
+	req.AvailableKeys = keyNames
 	s.mu.Lock()
 	s.keyConfig = req
+	s.keyName = keyName
 	s.mu.Unlock()
-	writeJSON(w, map[string]any{"ok": true, "key_name": s.keyName, "key_present": value != ""})
+	writeJSON(w, map[string]any{"ok": true, "key_name": keyName, "available_keys": keyNames, "key_present": value != ""})
 }
 
 type actionRequest struct {
@@ -525,12 +562,13 @@ func (s *Server) apiKeyForEngine(ctx context.Context, engine string) (string, er
 	if cfg.BaseURL == "" || cfg.Username == "" || cfg.Password == "" {
 		return "", fmt.Errorf("请先在页面填写并测试密钥分发服务、用户名、密码")
 	}
+	keyName := firstNonEmpty(cfg.KeyName, s.keyName)
 	client := keydist.Client{BaseURL: cfg.BaseURL}
 	token, err := client.Login(ctx, cfg.Username, cfg.Password)
 	if err != nil {
 		return "", err
 	}
-	return client.GetKey(ctx, token, s.keyName)
+	return client.GetKey(ctx, token, keyName)
 }
 
 func (s *Server) publicConfig() PublicConfig {
@@ -540,11 +578,22 @@ func (s *Server) publicConfig() PublicConfig {
 	return PublicConfig{
 		LLMBaseURL:        s.llmBaseURL,
 		LLMModel:          s.llmModel,
-		KeyName:           s.keyName,
+		KeyName:           firstNonEmpty(cfg.KeyName, s.keyName),
 		KeyDistConfigured: cfg.BaseURL != "" && cfg.Username != "" && cfg.Password != "",
 		KeyDistBaseURL:    cfg.BaseURL,
 		KeyDistUsername:   cfg.Username,
+		AvailableKeys:     s.availableKeysFromConfig(cfg),
 	}
+}
+
+func (s *Server) availableKeysFromConfig(cfg KeyConfig) []string {
+	if len(cfg.AvailableKeys) > 0 {
+		return append([]string(nil), cfg.AvailableKeys...)
+	}
+	if cfg.KeyName != "" {
+		return []string{cfg.KeyName}
+	}
+	return nil
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, out any) bool {
@@ -602,6 +651,15 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func withSecurityHeaders(next http.Handler) http.Handler {

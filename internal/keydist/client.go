@@ -30,6 +30,15 @@ type keyResponse struct {
 	Value   string `json:"value"`
 }
 
+type KeyInfo struct {
+	ID      int    `json:"id"`
+	KeyName string `json:"keyName"`
+}
+
+type listKeysResponse struct {
+	Keys []KeyInfo `json:"keys"`
+}
+
 func (c Client) Login(ctx context.Context, username, password string) (string, error) {
 	if strings.TrimSpace(c.BaseURL) == "" {
 		return "", fmt.Errorf("key distribution base URL is required")
@@ -78,6 +87,23 @@ func (c Client) GetKey(ctx context.Context, token, keyName string) (string, erro
 		return "", fmt.Errorf("key distribution returned empty value for %s", keyName)
 	}
 	return parsed.Value, nil
+}
+
+func (c Client) ListKeys(ctx context.Context, token string) ([]KeyInfo, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.BaseURL, "/")+"/api/keys", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	respData, err := c.do(req)
+	if err != nil {
+		return nil, err
+	}
+	var parsed listKeysResponse
+	if err := json.Unmarshal(respData, &parsed); err != nil {
+		return nil, err
+	}
+	return parsed.Keys, nil
 }
 
 func (c Client) do(req *http.Request) ([]byte, error) {

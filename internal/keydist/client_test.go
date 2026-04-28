@@ -19,6 +19,14 @@ func TestClientLoginAndGetKey(t *testing.T) {
 				t.Fatalf("unexpected login request: %#v", req)
 			}
 			_ = json.NewEncoder(w).Encode(loginResponse{Token: "token-1"})
+		case "/api/keys":
+			if r.Header.Get("Authorization") != "Bearer token-1" {
+				t.Fatalf("unexpected auth header %q", r.Header.Get("Authorization"))
+			}
+			_ = json.NewEncoder(w).Encode(listKeysResponse{Keys: []KeyInfo{
+				{ID: 1, KeyName: "OPENAI_API_KEY"},
+				{ID: 2, KeyName: "GEMINI_API_KEY"},
+			}})
 		case "/api/keys/OPENAI_API_KEY":
 			if r.Header.Get("Authorization") != "Bearer token-1" {
 				t.Fatalf("unexpected auth header %q", r.Header.Get("Authorization"))
@@ -41,5 +49,12 @@ func TestClientLoginAndGetKey(t *testing.T) {
 	}
 	if key != "sk-test" {
 		t.Fatalf("unexpected key %q", key)
+	}
+	keys, err := client.ListKeys(t.Context(), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 2 || keys[1].KeyName != "GEMINI_API_KEY" {
+		t.Fatalf("unexpected keys: %#v", keys)
 	}
 }

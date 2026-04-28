@@ -90,6 +90,14 @@ func TestServerKeyConfigTest(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/auth/login":
 			_ = json.NewEncoder(w).Encode(map[string]any{"token": "token-1"})
+		case "/api/keys":
+			if r.Header.Get("Authorization") != "Bearer token-1" {
+				t.Fatalf("unexpected auth header %q", r.Header.Get("Authorization"))
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]any{
+				{"id": 1, "keyName": "OPENAI_API_KEY"},
+				{"id": 2, "keyName": "GEMINI_API_KEY"},
+			}})
 		case "/api/keys/OPENAI_API_KEY":
 			if r.Header.Get("Authorization") != "Bearer token-1" {
 				t.Fatalf("unexpected auth header %q", r.Header.Get("Authorization"))
@@ -129,6 +137,12 @@ func TestServerKeyConfigTest(t *testing.T) {
 	}
 	if !state.Config.KeyDistConfigured || state.Config.KeyDistBaseURL != keyService.URL {
 		t.Fatalf("expected saved key config, got %#v", state.Config)
+	}
+	if len(state.Config.AvailableKeys) != 2 || state.Config.AvailableKeys[1] != "GEMINI_API_KEY" {
+		t.Fatalf("expected available keys, got %#v", state.Config.AvailableKeys)
+	}
+	if state.Config.KeyName != "OPENAI_API_KEY" {
+		t.Fatalf("unexpected key name %q", state.Config.KeyName)
 	}
 }
 
