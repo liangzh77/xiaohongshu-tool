@@ -205,6 +205,7 @@ func (d *DB) ListTargets(ctx context.Context, limit int) ([]Target, error) {
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT id, kind, name, url, keyword, min_interval_seconds, enabled
 		FROM collector_targets
+		WHERE enabled = 1
 		ORDER BY id DESC
 		LIMIT ?`, limit)
 	if err != nil {
@@ -220,6 +221,36 @@ func (d *DB) ListTargets(ctx context.Context, limit int) ([]Target, error) {
 		targets = append(targets, t)
 	}
 	return targets, rows.Err()
+}
+
+func (d *DB) UpdateTarget(ctx context.Context, t Target) error {
+	if t.ID <= 0 {
+		return fmt.Errorf("target id is required")
+	}
+	if t.Kind == "" || t.Name == "" {
+		return fmt.Errorf("kind and name are required")
+	}
+	if t.MinIntervalSeconds <= 0 {
+		t.MinIntervalSeconds = 300
+	}
+	_, err := d.db.ExecContext(ctx, `
+		UPDATE collector_targets
+		SET kind = ?, name = ?, url = ?, keyword = ?, min_interval_seconds = ?, enabled = ?, updated_at = datetime('now')
+		WHERE id = ?`,
+		t.Kind, t.Name, t.URL, t.Keyword, t.MinIntervalSeconds, t.Enabled, t.ID,
+	)
+	return err
+}
+
+func (d *DB) DeleteTarget(ctx context.Context, id int64) error {
+	if id <= 0 {
+		return fmt.Errorf("target id is required")
+	}
+	_, err := d.db.ExecContext(ctx, `
+		UPDATE collector_targets
+		SET enabled = 0, updated_at = datetime('now')
+		WHERE id = ?`, id)
+	return err
 }
 
 func (d *DB) DueTargets(ctx context.Context, now time.Time, limit int) ([]Target, error) {

@@ -115,6 +115,18 @@ const indexHTML = `<!doctype html>
     .item { border-top: 1px solid var(--border); padding: 11px 0; }
     .item:first-child { border-top: 0; padding-top: 0; }
     .item h3 { margin: 0 0 6px; font-size: 14px; }
+    .item-head { display: flex; align-items: start; justify-content: space-between; gap: 8px; }
+    .item-actions { display: inline-flex; gap: 6px; flex: 0 0 auto; }
+    .icon-btn {
+      min-width: 30px;
+      width: 30px;
+      height: 30px;
+      min-height: 30px;
+      padding: 0;
+      display: inline-grid;
+      place-items: center;
+    }
+    .icon-btn.danger { color: var(--danger); }
     .meta { color: var(--muted); font-size: 12px; display: flex; gap: 10px; flex-wrap: wrap; }
     .score { font-size: 24px; font-weight: 800; color: var(--accent); }
     .pill { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px; font-size: 12px; color: var(--muted); }
@@ -184,6 +196,7 @@ const indexHTML = `<!doctype html>
                 <div class="field"><label for="targetKeyword">关键词</label><input id="targetKeyword" value="AI工具"></div>
                 <div class="field"><label for="targetInterval">间隔秒</label><input id="targetInterval" type="number" value="300"></div>
                 <button id="addTarget">新增目标</button>
+                <button id="cancelTargetEdit" hidden>取消</button>
               </div>
               <div class="status" id="collectStatus"></div>
             </div>
@@ -268,7 +281,7 @@ const indexHTML = `<!doctype html>
   </div>
   <script>
     const qs = (id) => document.getElementById(id);
-    const state = { data: null };
+    const state = { data: null, editingTargetId: 0 };
     const viewMeta = {
       overview: ["总览", "查看采集、选题、草稿和复盘状态"],
       collect: ["采集", "管理关键词目标，低频抓取最新内容"],
@@ -321,7 +334,10 @@ const indexHTML = `<!doctype html>
       renderList("publishes", data.publishes, renderPublish);
       renderList("reports", data.reports, renderReport);
     }
-    function renderTarget(t) { return '<div class="item"><h3>' + esc(field(t, "name", "Name")) + '</h3><div class="meta"><span>' + esc(field(t, "kind", "Kind")) + '</span><span>' + esc(field(t, "keyword", "Keyword") || field(t, "url", "URL")) + '</span><span>' + field(t, "min_interval_seconds", "MinIntervalSeconds") + 's</span></div></div>'; }
+    function renderTarget(t) {
+      const id = Number(field(t, "id", "ID"));
+      return '<div class="item"><div class="item-head"><div><h3>' + esc(field(t, "name", "Name")) + '</h3><div class="meta"><span>' + esc(field(t, "kind", "Kind")) + '</span><span>' + esc(field(t, "keyword", "Keyword") || field(t, "url", "URL")) + '</span><span>' + field(t, "min_interval_seconds", "MinIntervalSeconds") + 's</span></div></div><div class="item-actions"><button class="icon-btn" title="编辑" aria-label="编辑采集目标" onclick="editTarget(' + id + ')">改</button><button class="icon-btn danger" title="删除" aria-label="删除采集目标" onclick="deleteTarget(' + id + ')">×</button></div></div></div>';
+    }
     function renderItem(item) { return '<div class="item"><h3>' + esc(item.title || "无标题") + '</h3><div class="meta"><span>' + esc(item.author_name || "未知作者") + '</span><span>赞 ' + num(item.like_count) + '</span><span>藏 ' + num(item.collect_count) + '</span><span>评 ' + num(item.comment_count) + '</span></div>' + (item.body ? '<pre>' + esc(item.body) + '</pre>' : '') + '</div>'; }
     function renderAnalysis(a) { return '<div class="item"><h3>' + esc(a.topic) + '</h3><div class="meta"><span>' + esc(a.model_name) + '</span><span>' + esc(a.reusable_pattern) + '</span></div><pre>' + esc(a.audience_pain || "") + '</pre></div>'; }
     function renderCandidate(c) { return '<div class="item"><div class="score">' + c.total_score + '</div><h3>' + esc(c.topic) + '</h3><div class="meta"><span>趋势 ' + c.trend_score + '</span><span>涨粉 ' + c.growth_score + '</span><span>风险 ' + c.risk_score + '</span><span>' + esc(c.scoring_model) + '</span></div><pre>' + esc(c.reason || "") + '</pre></div>'; }
@@ -369,7 +385,42 @@ const indexHTML = `<!doctype html>
         await refresh();
       } catch (err) { setStatus("keyStatus", err.message, "error"); }
     };
-    qs("addTarget").onclick = () => runAction("collectStatus", "新增目标", "/api/targets", { kind: "keyword", name: qs("targetName").value, keyword: qs("targetKeyword").value, interval: Number(qs("targetInterval").value || 300) });
+    function targetPayload() {
+      return { id: state.editingTargetId, kind: "keyword", name: qs("targetName").value, keyword: qs("targetKeyword").value, interval: Number(qs("targetInterval").value || 300) };
+    }
+    function resetTargetForm() {
+      state.editingTargetId = 0;
+      qs("addTarget").textContent = "新增目标";
+      qs("cancelTargetEdit").hidden = true;
+      qs("targetName").value = "AI工具";
+      qs("targetKeyword").value = "AI工具";
+      qs("targetInterval").value = "300";
+    }
+    window.editTarget = (id) => {
+      const target = (state.data.targets || []).find(t => Number(field(t, "id", "ID")) === id);
+      if (!target) return;
+      state.editingTargetId = id;
+      qs("targetName").value = field(target, "name", "Name");
+      qs("targetKeyword").value = field(target, "keyword", "Keyword");
+      qs("targetInterval").value = field(target, "min_interval_seconds", "MinIntervalSeconds") || 300;
+      qs("addTarget").textContent = "保存修改";
+      qs("cancelTargetEdit").hidden = false;
+      setStatus("collectStatus", "正在编辑目标：" + field(target, "name", "Name"));
+    };
+    window.deleteTarget = async (id) => {
+      try {
+        await api("/api/targets/delete", { method: "POST", body: JSON.stringify({ id }) });
+        if (state.editingTargetId === id) resetTargetForm();
+        await refresh();
+        setStatus("collectStatus", "目标已删除", "ok");
+      } catch (err) { setStatus("collectStatus", err.message, "error"); }
+    };
+    qs("cancelTargetEdit").onclick = () => { resetTargetForm(); setStatus("collectStatus", ""); };
+    qs("addTarget").onclick = async () => {
+      const label = state.editingTargetId ? "保存修改" : "新增目标";
+      await runAction("collectStatus", label, "/api/targets", targetPayload());
+      resetTargetForm();
+    };
     qs("collect").onclick = () => runAction("collectRunStatus", "采集", "/api/collect/once", { command: qs("collectorCmd").value, limit: 1 });
     qs("analyze").onclick = () => runAction("topicStatus", "拆解", "/api/analyze/batch", topicBody());
     qs("score").onclick = () => runAction("topicStatus", "评分", "/api/score/batch", topicBody());

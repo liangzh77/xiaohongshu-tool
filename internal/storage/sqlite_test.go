@@ -95,6 +95,50 @@ func TestListTargets(t *testing.T) {
 	}
 }
 
+func TestUpdateAndDeleteTarget(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	id, err := db.AddTarget(ctx, Target{Kind: "keyword", Name: "AI", Keyword: "AI工具", MinIntervalSeconds: 300, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateTarget(ctx, Target{
+		ID:                 id,
+		Kind:               "keyword",
+		Name:               "AI效率工具",
+		Keyword:            "AI效率",
+		MinIntervalSeconds: 600,
+		Enabled:            true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	targets, err := db.ListTargets(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 1 || targets[0].Name != "AI效率工具" || targets[0].Keyword != "AI效率" || targets[0].MinIntervalSeconds != 600 {
+		t.Fatalf("unexpected updated targets: %#v", targets)
+	}
+	if err := db.DeleteTarget(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	targets, err = db.ListTargets(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 0 {
+		t.Fatalf("expected deleted target to be hidden, got %#v", targets)
+	}
+}
+
 func TestSaveItemsUpsertsByTargetAndExternalID(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(filepath.Join(t.TempDir(), "test.db"))

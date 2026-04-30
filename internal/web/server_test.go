@@ -85,6 +85,48 @@ func TestServerAddTarget(t *testing.T) {
 	}
 }
 
+func TestServerUpdateAndDeleteTarget(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	id, err := db.AddTarget(ctx, storage.Target{Kind: "keyword", Name: "AI", Keyword: "AI工具", MinIntervalSeconds: 300, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(NewServer(Config{DB: db}).Handler())
+	defer srv.Close()
+
+	postJSON(t, srv.URL+"/api/targets", map[string]any{
+		"id":       id,
+		"kind":     "keyword",
+		"name":     "AI效率工具",
+		"keyword":  "AI效率",
+		"interval": 600,
+	})
+	targets, err := db.ListTargets(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 1 || targets[0].Name != "AI效率工具" || targets[0].Keyword != "AI效率" {
+		t.Fatalf("unexpected updated targets: %#v", targets)
+	}
+
+	postJSON(t, srv.URL+"/api/targets/delete", map[string]any{"id": id})
+	targets, err = db.ListTargets(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 0 {
+		t.Fatalf("expected target to be hidden after delete, got %#v", targets)
+	}
+}
+
 func TestServerKeyConfigTest(t *testing.T) {
 	keyService := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

@@ -100,6 +100,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/favicon.ico", s.handleFavicon)
 	mux.HandleFunc("/api/state", s.handleState)
 	mux.HandleFunc("/api/targets", s.handleTargets)
+	mux.HandleFunc("/api/targets/delete", s.handleTargetDelete)
 	mux.HandleFunc("/api/collect/once", s.handleCollectOnce)
 	mux.HandleFunc("/api/analyze/batch", s.handleAnalyzeBatch)
 	mux.HandleFunc("/api/score/batch", s.handleScoreBatch)
@@ -198,6 +199,7 @@ func (s *Server) handleTargets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
+		ID       int64  `json:"id"`
 		Kind     string `json:"kind"`
 		Name     string `json:"name"`
 		URL      string `json:"url"`
@@ -205,6 +207,23 @@ func (s *Server) handleTargets(w http.ResponseWriter, r *http.Request) {
 		Interval int    `json:"interval"`
 	}
 	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.ID > 0 {
+		err := s.db.UpdateTarget(r.Context(), storage.Target{
+			ID:                 req.ID,
+			Kind:               req.Kind,
+			Name:               req.Name,
+			URL:                req.URL,
+			Keyword:            req.Keyword,
+			MinIntervalSeconds: req.Interval,
+			Enabled:            true,
+		})
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{"id": req.ID})
 		return
 	}
 	id, err := s.db.AddTarget(r.Context(), storage.Target{
@@ -220,6 +239,24 @@ func (s *Server) handleTargets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"id": id})
+}
+
+func (s *Server) handleTargetDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	var req struct {
+		ID int64 `json:"id"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if err := s.db.DeleteTarget(r.Context(), req.ID); err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, map[string]any{"id": req.ID, "deleted": true})
 }
 
 func (s *Server) handleCollectOnce(w http.ResponseWriter, r *http.Request) {
