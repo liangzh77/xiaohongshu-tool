@@ -115,6 +115,8 @@ const indexHTML = `<!doctype html>
     .item { border-top: 1px solid var(--border); padding: 11px 0; }
     .item:first-child { border-top: 0; padding-top: 0; }
     .item h3 { margin: 0 0 6px; font-size: 14px; }
+    .item.selectable { cursor: pointer; border-radius: 6px; padding-left: 8px; padding-right: 8px; }
+    .item.selectable:hover, .item.selectable.active { background: var(--surface-2); }
     .item-head { display: flex; align-items: start; justify-content: space-between; gap: 8px; }
     .item-actions { display: inline-flex; gap: 6px; flex: 0 0 auto; }
     .icon-btn {
@@ -145,6 +147,11 @@ const indexHTML = `<!doctype html>
       overflow: auto;
     }
     .empty { color: var(--muted); padding: 20px 0; }
+    .detail-title { margin: 0 0 8px; font-size: 18px; }
+    .detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
+    .detail-field { background: var(--surface-2); border-radius: 6px; padding: 10px; min-width: 0; }
+    .detail-field strong { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+    .detail-link { color: var(--accent); word-break: break-all; }
     @media (max-width: 980px) {
       .app { grid-template-columns: 1fr; }
       aside { position: static; height: auto; }
@@ -164,6 +171,7 @@ const indexHTML = `<!doctype html>
       <nav aria-label="工作区导航">
         <button class="nav-btn active" data-view="overview">总览</button>
         <button class="nav-btn" data-view="collect">采集</button>
+        <button class="nav-btn" data-view="content">内容</button>
         <button class="nav-btn" data-view="topics">选题</button>
         <button class="nav-btn" data-view="drafts">草稿</button>
         <button class="nav-btn" data-view="review">复盘</button>
@@ -209,8 +217,14 @@ const indexHTML = `<!doctype html>
               <div class="status" id="collectRunStatus"></div>
             </div>
             <div class="panel span-7"><h2>采集目标</h2><div id="targets"></div></div>
-            <div class="panel span-8"><h2>采集内容</h2><div id="items"></div></div>
             <div class="panel span-4"><h2>运行记录</h2><div id="runs"></div></div>
+          </div>
+        </section>
+
+        <section class="view" id="view-content">
+          <div class="grid">
+            <div class="panel span-5"><h2>内容列表</h2><div id="contentItems"></div></div>
+            <div class="panel span-7"><h2>内容详情</h2><div id="itemDetail"></div></div>
           </div>
         </section>
 
@@ -281,10 +295,11 @@ const indexHTML = `<!doctype html>
   </div>
   <script>
     const qs = (id) => document.getElementById(id);
-    const state = { data: null, editingTargetId: 0 };
+    const state = { data: null, editingTargetId: 0, selectedItemId: 0 };
     const viewMeta = {
       overview: ["总览", "查看采集、选题、草稿和复盘状态"],
       collect: ["采集", "管理关键词目标，低频抓取最新内容"],
+      content: ["内容", "查看已采集内容列表和完整详情"],
       topics: ["选题", "拆解笔记并生成可排序的候选选题"],
       drafts: ["草稿", "把高分选题生成可审核的内容草稿"],
       review: ["复盘", "记录发布表现并沉淀复盘评分"],
@@ -326,7 +341,8 @@ const indexHTML = `<!doctype html>
       renderList("overviewCandidates", (data.candidates || []).slice(0, 3), renderCandidate);
       renderList("overviewDrafts", (data.drafts || []).slice(0, 2), renderDraft);
       renderList("targets", data.targets, renderTarget);
-      renderList("items", data.items, renderItem);
+      renderList("contentItems", data.items, renderContentListItem);
+      renderItemDetail();
       renderList("runs", data.runs, renderRun);
       renderList("analyses", data.analyses, renderAnalysis);
       renderList("candidates", data.candidates, renderCandidate);
@@ -339,6 +355,33 @@ const indexHTML = `<!doctype html>
       return '<div class="item"><div class="item-head"><div><h3>' + esc(field(t, "name", "Name")) + '</h3><div class="meta"><span>' + esc(field(t, "kind", "Kind")) + '</span><span>' + esc(field(t, "keyword", "Keyword") || field(t, "url", "URL")) + '</span><span>' + field(t, "min_interval_seconds", "MinIntervalSeconds") + 's</span></div></div><div class="item-actions"><button class="icon-btn" title="编辑" aria-label="编辑采集目标" onclick="editTarget(' + id + ')">改</button><button class="icon-btn danger" title="删除" aria-label="删除采集目标" onclick="deleteTarget(' + id + ')">×</button></div></div></div>';
     }
     function renderItem(item) { return '<div class="item"><h3>' + esc(item.title || "无标题") + '</h3><div class="meta"><span>' + esc(item.author_name || "未知作者") + '</span><span>赞 ' + num(item.like_count) + '</span><span>藏 ' + num(item.collect_count) + '</span><span>评 ' + num(item.comment_count) + '</span></div>' + (item.body ? '<pre>' + esc(item.body) + '</pre>' : '') + '</div>'; }
+    function renderContentListItem(item) {
+      const active = Number(item.id) === Number(state.selectedItemId) ? " active" : "";
+      return '<div class="item selectable' + active + '" onclick="selectItem(' + Number(item.id) + ')"><h3>' + esc(item.title || "无标题") + '</h3><div class="meta"><span>' + esc(item.author_name || "未知作者") + '</span><span>赞 ' + num(item.like_count) + '</span><span>藏 ' + num(item.collect_count) + '</span><span>评 ' + num(item.comment_count) + '</span></div></div>';
+    }
+    function renderItemDetail() {
+      const items = (state.data && state.data.items) || [];
+      if (!state.selectedItemId && items.length > 0) state.selectedItemId = items[0].id;
+      const item = items.find(it => Number(it.id) === Number(state.selectedItemId));
+      const el = qs("itemDetail");
+      if (!item) { el.innerHTML = '<div class="empty">请选择左侧内容</div>'; return; }
+      const tags = (item.tags || []).join(" / ");
+      el.innerHTML = '<h3 class="detail-title">' + esc(item.title || "无标题") + '</h3>'
+        + '<div class="meta"><span>ID ' + item.id + '</span><span>目标 ' + esc(item.target_name || "") + '</span><span>采集 ' + esc(item.captured_at || "") + '</span></div>'
+        + '<div class="detail-grid">'
+        + detailField("作者", item.author_name || "-")
+        + detailField("外部 ID", item.external_id || "-")
+        + detailField("点赞", num(item.like_count))
+        + detailField("收藏", num(item.collect_count))
+        + detailField("评论", num(item.comment_count))
+        + detailField("发布时间", item.published_at || "-")
+        + detailField("标签", tags || "-")
+        + detailField("链接", item.url ? '<a class="detail-link" href="' + esc(item.url) + '" target="_blank" rel="noreferrer">' + esc(item.url) + '</a>' : "-")
+        + '</div>'
+        + '<h3>正文</h3><pre>' + esc(item.body || "采集结果没有正文。可将采集命令改为 --details=true 后重采。") + '</pre>'
+        + '<h3>原始 JSON</h3><pre>' + esc(JSON.stringify(item.raw || {}, null, 2)) + '</pre>';
+    }
+    function detailField(label, value) { return '<div class="detail-field"><strong>' + esc(label) + '</strong><span>' + value + '</span></div>'; }
     function renderAnalysis(a) { return '<div class="item"><h3>' + esc(a.topic) + '</h3><div class="meta"><span>' + esc(a.model_name) + '</span><span>' + esc(a.reusable_pattern) + '</span></div><pre>' + esc(a.audience_pain || "") + '</pre></div>'; }
     function renderCandidate(c) { return '<div class="item"><div class="score">' + c.total_score + '</div><h3>' + esc(c.topic) + '</h3><div class="meta"><span>趋势 ' + c.trend_score + '</span><span>涨粉 ' + c.growth_score + '</span><span>风险 ' + c.risk_score + '</span><span>' + esc(c.scoring_model) + '</span></div><pre>' + esc(c.reason || "") + '</pre></div>'; }
     function renderDraft(d) { return '<div class="item"><h3>' + esc((d.title_options || [])[0] || "草稿") + '</h3><div class="meta"><span>' + esc(d.generator) + '</span><span>' + (d.tags || []).map(esc).join(" / ") + '</span></div><pre>' + esc(d.opening + "\n\n" + d.body) + '</pre></div>'; }
@@ -369,6 +412,7 @@ const indexHTML = `<!doctype html>
       setStatus(statusId, label + "完成", "ok");
     }
     document.querySelectorAll(".nav-btn").forEach(btn => btn.onclick = () => switchView(btn.dataset.view));
+    window.selectItem = (id) => { state.selectedItemId = id; render(); };
     qs("saveKey").onclick = async () => {
       try {
         setStatus("keyStatus", "测试中...");
