@@ -175,6 +175,43 @@ func TestSaveItemsUpsertsByTargetAndExternalID(t *testing.T) {
 	}
 }
 
+func TestSaveItemsForRunStoresRunItems(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	targetID, err := db.AddTarget(ctx, Target{Kind: "keyword", Name: "AI", MinIntervalSeconds: 300, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID, err := db.StartRun(ctx, targetID, "external_command", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := db.SaveItemsForRun(ctx, runID, targetID, []Item{
+		{ExternalID: "note-1", Title: "第一条", URL: "https://example.test/1"},
+		{ExternalID: "note-2", Title: "第二条", URL: "https://example.test/2"},
+	}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 saved items, got %d", len(items))
+	}
+	runItems, err := db.ListRunItems(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runItems) != 2 || runItems[0].Title != "第一条" || runItems[1].Title != "第二条" {
+		t.Fatalf("unexpected run items: %#v", runItems)
+	}
+}
+
 func TestListItemsAndGetItem(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(filepath.Join(t.TempDir(), "test.db"))
@@ -191,14 +228,17 @@ func TestListItemsAndGetItem(t *testing.T) {
 	}
 	likes := 7
 	if err := db.SaveItems(ctx, targetID, []Item{{
-		ExternalID: "note-1",
-		URL:        "https://example.test/note-1",
-		AuthorName: "作者",
-		Title:      "标题",
-		Body:       "正文",
-		Tags:       []string{"AI", "工具"},
-		LikeCount:  &likes,
-		Raw:        map[string]any{"source": "test"},
+		ExternalID:    "note-1",
+		URL:           "https://example.test/note-1",
+		AuthorName:    "作者",
+		Title:         "标题",
+		Body:          "正文",
+		Tags:          []string{"AI", "工具"},
+		DetailStatus:  "failed",
+		DetailMessage: "PC 详情不可访问",
+		MissingFields: []string{"published_at"},
+		LikeCount:     &likes,
+		Raw:           map[string]any{"source": "test"},
 	}}, time.Date(2026, 4, 28, 1, 2, 3, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
@@ -220,6 +260,12 @@ func TestListItemsAndGetItem(t *testing.T) {
 	}
 	if item.Body != "正文" || item.Raw["source"] != "test" {
 		t.Fatalf("unexpected item detail: %#v", item)
+	}
+	if item.DetailStatus != "failed" || item.DetailMessage != "PC 详情不可访问" {
+		t.Fatalf("unexpected detail fields: %#v", item)
+	}
+	if len(item.MissingFields) != 1 || item.MissingFields[0] != "published_at" {
+		t.Fatalf("unexpected missing fields: %#v", item.MissingFields)
 	}
 }
 

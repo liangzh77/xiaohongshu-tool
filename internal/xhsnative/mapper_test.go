@@ -40,7 +40,7 @@ func TestItemFromDetail(t *testing.T) {
 			NoteID:    "note-2",
 			XsecToken: "token-2",
 			Title:     "详情标题",
-			Desc:      "正文",
+			Desc:      "正文 #AI工具 #小红书运营",
 			Time:      1702195200000,
 			User: upstream.User{
 				NickName: "作者B",
@@ -54,7 +54,48 @@ func TestItemFromDetail(t *testing.T) {
 	if item.ExternalID != "note-2" || item.Body != "正文" || item.AuthorName != "作者B" {
 		t.Fatalf("unexpected item: %#v", item)
 	}
+	if len(item.Tags) != 2 || item.Tags[0] != "AI工具" || item.Tags[1] != "小红书运营" {
+		t.Fatalf("unexpected tags: %#v", item.Tags)
+	}
+	if item.DetailStatus != "succeeded" {
+		t.Fatalf("unexpected detail status %q", item.DetailStatus)
+	}
 	if item.PublishedAt != "2023-12-10T08:00:00Z" {
 		t.Fatalf("unexpected published_at %q", item.PublishedAt)
 	}
 }
+
+func TestStripTagsRemovesXiaohongshuTopicBlocks(t *testing.T) {
+	body := "今天分享一个工具 #AIChannel[话题]# #养虾高手大赏[话题]#  #openclaw[话题]# #AI工具[话题]#"
+	if got := StripTags(body); got != "今天分享一个工具" {
+		t.Fatalf("unexpected stripped body %q", got)
+	}
+	tags := ExtractTags(body)
+	if len(tags) != 4 || tags[0] != "AIChannel" || tags[3] != "AI工具" {
+		t.Fatalf("unexpected tags %#v", tags)
+	}
+}
+
+func TestMarkDetailFailure(t *testing.T) {
+	item := MarkDetailFailure(ItemFromFeed(upstream.Feed{
+		ID:        "note-1",
+		XsecToken: "token-1",
+		NoteCard: upstream.NoteCard{
+			DisplayTitle: "标题",
+		},
+	}), assertErr("pc detail unavailable"))
+
+	if item.DetailStatus != "failed" {
+		t.Fatalf("unexpected detail status %q", item.DetailStatus)
+	}
+	if item.DetailMessage != "pc detail unavailable" {
+		t.Fatalf("unexpected detail message %q", item.DetailMessage)
+	}
+	if len(item.MissingFields) == 0 {
+		t.Fatalf("expected missing fields")
+	}
+}
+
+type assertErr string
+
+func (e assertErr) Error() string { return string(e) }

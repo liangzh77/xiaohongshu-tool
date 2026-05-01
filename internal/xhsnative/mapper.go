@@ -2,7 +2,9 @@ package xhsnative
 
 import (
 	"net/url"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	upstream "github.com/xpzouying/xiaohongshu-mcp/xiaohongshu"
@@ -12,14 +14,16 @@ import (
 
 func ItemFromFeed(feed upstream.Feed) storage.Item {
 	return storage.Item{
-		ExternalID:   feed.ID,
-		URL:          feedURL(feed.ID, feed.XsecToken),
-		AuthorName:   firstNonEmpty(feed.NoteCard.User.Nickname, feed.NoteCard.User.NickName),
-		Title:        feed.NoteCard.DisplayTitle,
-		Tags:         []string{},
-		LikeCount:    intPtr(feed.NoteCard.InteractInfo.LikedCount),
-		CollectCount: intPtr(feed.NoteCard.InteractInfo.CollectedCount),
-		CommentCount: intPtr(feed.NoteCard.InteractInfo.CommentCount),
+		ExternalID:    feed.ID,
+		URL:           feedURL(feed.ID, feed.XsecToken),
+		AuthorName:    firstNonEmpty(feed.NoteCard.User.Nickname, feed.NoteCard.User.NickName),
+		Title:         feed.NoteCard.DisplayTitle,
+		Tags:          []string{},
+		DetailStatus:  "search_only",
+		MissingFields: []string{"body", "tags", "published_at"},
+		LikeCount:     intPtr(feed.NoteCard.InteractInfo.LikedCount),
+		CollectCount:  intPtr(feed.NoteCard.InteractInfo.CollectedCount),
+		CommentCount:  intPtr(feed.NoteCard.InteractInfo.CommentCount),
 		Raw: map[string]any{
 			"source": "xiaohongshu-native",
 			"feed":   feed,
@@ -34,8 +38,9 @@ func ItemFromDetail(detail *upstream.FeedDetailResponse) storage.Item {
 		URL:          feedURL(note.NoteID, note.XsecToken),
 		AuthorName:   firstNonEmpty(note.User.Nickname, note.User.NickName),
 		Title:        note.Title,
-		Body:         note.Desc,
-		Tags:         []string{},
+		Body:         StripTags(note.Desc),
+		Tags:         extractTags(note.Desc),
+		DetailStatus: "succeeded",
 		LikeCount:    intPtr(note.InteractInfo.LikedCount),
 		CollectCount: intPtr(note.InteractInfo.CollectedCount),
 		CommentCount: intPtr(note.InteractInfo.CommentCount),
@@ -78,12 +83,75 @@ func MergeItem(base, detail storage.Item) storage.Item {
 	if detail.PublishedAt != "" {
 		base.PublishedAt = detail.PublishedAt
 	}
+	base.DetailStatus = detail.DetailStatus
+	base.DetailMessage = detail.DetailMessage
 	base.Raw = map[string]any{
 		"source": "xiaohongshu-native",
 		"search": base.Raw,
 		"detail": detail.Raw,
 	}
+	base.MissingFields = MissingFields(base)
 	return base
+}
+
+func MarkDetailFailure(item storage.Item, err error) storage.Item {
+	item.DetailStatus = "failed"
+	if err != nil {
+		item.DetailMessage = err.Error()
+	}
+	item.MissingFields = MissingFields(item)
+	if item.Raw == nil {
+		item.Raw = map[string]any{}
+	}
+	item.Raw["detail_error"] = item.DetailMessage
+	return item
+}
+
+func MissingFields(item storage.Item) []string {
+	var missing []string
+	if strings.TrimSpace(item.Body) == "" {
+		missing = append(missing, "body")
+	}
+	if len(item.Tags) == 0 {
+		missing = append(missing, "tags")
+	}
+	if strings.TrimSpace(item.PublishedAt) == "" {
+		missing = append(missing, "published_at")
+	}
+	return missing
+}
+
+func ExtractTags(body string) []string {
+	return extractTags(body)
+}
+
+func StripTags(body string) string {
+	cleaned := topicTagBlockPattern.ReplaceAllString(body, " ")
+	cleaned = plainHashTagPattern.ReplaceAllString(cleaned, " ")
+	return strings.TrimSpace(spacePattern.ReplaceAllString(cleaned, " "))
+}
+
+var tagPattern = regexp.MustCompile(`#\s*([\p{Han}\p{L}\p{N}_-]+)`)
+var topicTagBlockPattern = regexp.MustCompile(`#\s*[^#\r\n]*?\[话题\]\s*#`)
+var plainHashTagPattern = regexp.MustCompile(`#\s*[\p{Han}\p{L}\p{N}_-]+#?`)
+var spacePattern = regexp.MustCompile(`[ \t]{2,}`)
+
+func extractTags(body string) []string {
+	matches := tagPattern.FindAllStringSubmatch(body, -1)
+	seen := map[string]bool{}
+	tags := make([]string, 0, len(matches))
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		tag := strings.TrimSpace(match[1])
+		if tag == "" || seen[tag] {
+			continue
+		}
+		seen[tag] = true
+		tags = append(tags, tag)
+	}
+	return tags
 }
 
 func intPtr(value string) *int {

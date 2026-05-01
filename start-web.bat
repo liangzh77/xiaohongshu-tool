@@ -4,7 +4,7 @@ setlocal
 cd /d "%~dp0"
 
 set "DB_PATH=data\xhs.db"
-set "COLLECTOR_CMD=go run ./cmd/xhs-native-collector --limit 3 --details=false"
+set "COLLECTOR_CMD=go run ./cmd/xhs-native-collector"
 
 if not "%~1"=="" (
   set "PORT=%~1"

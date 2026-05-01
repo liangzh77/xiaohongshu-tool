@@ -18,6 +18,7 @@ import (
 	"xiaohongshu-tool/internal/reviewer"
 	"xiaohongshu-tool/internal/scorer"
 	"xiaohongshu-tool/internal/storage"
+	"xiaohongshu-tool/internal/xhsnative"
 )
 
 type Config struct {
@@ -39,6 +40,8 @@ type Server struct {
 	keyName      string
 	mu           sync.RWMutex
 	keyConfig    KeyConfig
+	loginState   LoginState
+	xhsCollector *xhsnative.Collector
 }
 
 type KeyConfig struct {
@@ -49,9 +52,22 @@ type KeyConfig struct {
 	AvailableKeys []string `json:"available_keys,omitempty"`
 }
 
+type LoginState struct {
+	Status          string `json:"status"`
+	Message         string `json:"message"`
+	QRCodeDataURL   string `json:"qrcode_data_url,omitempty"`
+	QRCodeHTMLPath  string `json:"qrcode_html_path,omitempty"`
+	CookiePath      string `json:"cookie_path,omitempty"`
+	StartedAt       string `json:"started_at,omitempty"`
+	FinishedAt      string `json:"finished_at,omitempty"`
+	SavedCookies    bool   `json:"saved_cookies"`
+	AlreadyLoggedIn bool   `json:"already_logged_in"`
+}
+
 type StateResponse struct {
 	Targets    []storage.Target              `json:"targets"`
 	Runs       []storage.Run                 `json:"runs"`
+	RunDetails []storage.RunDetail           `json:"run_details"`
 	Items      []storage.StoredItem          `json:"items"`
 	Analyses   []storage.NoteAnalysis        `json:"analyses"`
 	Candidates []storage.TopicCandidate      `json:"candidates"`
@@ -91,6 +107,7 @@ func NewServer(cfg Config) *Server {
 			BaseURL: cfg.KeyDistBaseURL,
 			KeyName: keyName,
 		},
+		xhsCollector: xhsnative.NewCollector(false, os.Getenv("ROD_BROWSER_BIN")),
 	}
 }
 
@@ -110,6 +127,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/review/score", s.handleReviewScore)
 	mux.HandleFunc("/api/key-config", s.handleKeyConfig)
 	mux.HandleFunc("/api/key-config/test", s.handleKeyConfigTest)
+	mux.HandleFunc("/api/xhs-login/qrcode", s.handleXHSLoginQRCode)
+	mux.HandleFunc("/api/xhs-login/status", s.handleXHSLoginStatus)
+	mux.HandleFunc("/api/xhs-login/logout", s.handleXHSLogout)
 	return withSecurityHeaders(mux)
 }
 
@@ -140,6 +160,11 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	runs, err := s.db.ListRuns(ctx, limit)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	runDetails, err := s.db.ListRunDetails(ctx, limit)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -182,6 +207,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, StateResponse{
 		Targets:    targets,
 		Runs:       runs,
+		RunDetails: runDetails,
 		Items:      items,
 		Analyses:   analyses,
 		Candidates: candidates,
@@ -265,23 +291,325 @@ func (s *Server) handleCollectOnce(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Command string `json:"command"`
-		Limit   int    `json:"limit"`
+		TargetIDs []int64 `json:"target_ids"`
+		ItemLimit int     `json:"item_limit"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	command := firstNonEmpty(req.Command, s.collectorCmd)
-	if command == "" {
-		writeError(w, fmt.Errorf("collector command is required"))
+	if len(req.TargetIDs) == 0 {
+		writeError(w, fmt.Errorf("请选择采集目标"))
 		return
 	}
-	count, err := collector.NewRunner(s.db, collector.ExternalCommand{Command: command}).RunDue(r.Context(), req.Limit)
+	targets, err := s.selectedTargets(r.Context(), req.TargetIDs)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, map[string]any{"collected_targets": count})
+	if len(targets) == 0 {
+		writeError(w, fmt.Errorf("没有找到可用采集目标"))
+		return
+	}
+	summary, err := s.runLocalBrowserCollection(r.Context(), targets, req.ItemLimit)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, summary)
+}
+
+func (s *Server) runLocalBrowserCollection(ctx context.Context, targets []storage.Target, itemLimit int) (collector.Summary, error) {
+	if itemLimit <= 0 {
+		itemLimit = 3
+	}
+	if itemLimit > 20 {
+		itemLimit = 20
+	}
+	summary := collector.Summary{Runs: make([]collector.RunSummary, 0, len(targets))}
+	for _, target := range targets {
+		startedAt := time.Now()
+		runID, err := s.db.StartRun(ctx, target.ID, "local_browser_search", startedAt)
+		if err != nil {
+			return summary, err
+		}
+		keyword := firstNonEmpty(target.Keyword, target.Name)
+		if keyword == "" {
+			_ = s.db.FinishRun(ctx, runID, "failed", "关键词为空", time.Now())
+			continue
+		}
+		result, err := s.xhsCollector.SearchThenOpenDetails(ctx, xhsnative.NaturalSearchOptions{
+			Keyword:  keyword,
+			Limit:    itemLimit,
+			DelayMin: 10 * time.Second,
+			DelayMax: 30 * time.Second,
+			Exists: func(ctx context.Context, externalID string) (bool, error) {
+				return s.db.ItemExistsByExternalID(ctx, externalID)
+			},
+		})
+		logs := result.Logs
+		if err != nil {
+			if len(result.Items) > 0 {
+				saved, saveErr := s.db.SaveItemsForRun(ctx, runID, target.ID, result.Items, time.Now())
+				if saveErr != nil {
+					logs = append(logs, "暂停前保存失败："+saveErr.Error())
+				} else {
+					logs = append(logs, fmt.Sprintf("暂停前已保存 %d 条内容", len(saved)))
+				}
+			}
+			logs = append(logs, "采集失败："+err.Error())
+			status := "failed"
+			if xhsnative.IsQRCodeLoginRequired(err) {
+				status = "needs_login"
+				logs = append(logs, "已暂停：等待前端扫码登录成功后自动重试本次采集请求")
+			}
+			_ = s.db.FinishRun(ctx, runID, status, strings.Join(logs, "\n"), time.Now())
+			if xhsnative.IsQRCodeLoginRequired(err) {
+				return summary, err
+			}
+			continue
+		}
+		saved, err := s.db.SaveItemsForRun(ctx, runID, target.ID, result.Items, time.Now())
+		if err != nil {
+			logs = append(logs, "保存失败："+err.Error())
+			_ = s.db.FinishRun(ctx, runID, "failed", strings.Join(logs, "\n"), time.Now())
+			continue
+		}
+		titles := make([]string, 0, len(saved))
+		for _, item := range saved {
+			titles = append(titles, item.Title)
+		}
+		logs = append(logs, fmt.Sprintf("collected_items=%d skipped_existing=%d detail_failed=%d", len(saved), result.Skipped, result.Failed))
+		_ = s.db.FinishRun(ctx, runID, "succeeded", strings.Join(logs, "\n"), time.Now())
+		summary.TargetCount++
+		summary.ItemCount += len(saved)
+		summary.Runs = append(summary.Runs, collector.RunSummary{
+			RunID:      runID,
+			TargetID:   target.ID,
+			TargetName: target.Name,
+			ItemCount:  len(saved),
+			Titles:     titles,
+		})
+	}
+	return summary, nil
+}
+
+func (s *Server) handleXHSLoginQRCode(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	var req struct {
+		Force bool `json:"force"`
+		Auto  bool `json:"auto"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	startedAt := time.Now().UTC().Format(time.RFC3339)
+	s.mu.Lock()
+	if s.loginState.Status == "starting" || s.loginState.Status == "waiting" {
+		state := s.loginState
+		s.mu.Unlock()
+		writeJSON(w, state)
+		return
+	}
+	s.loginState = LoginState{Status: "starting", Message: "正在生成登录二维码", StartedAt: startedAt, CookiePath: "data/cookies.json"}
+	s.mu.Unlock()
+
+	qrReady := make(chan struct{}, 1)
+	if req.Force {
+		go s.runXHSPersistentPageQRCodeLogin(qrReady, req.Auto)
+	} else {
+		go s.runXHSQRCodeLogin(qrReady, false)
+	}
+
+	select {
+	case <-qrReady:
+	case <-time.After(45 * time.Second):
+	}
+	writeJSON(w, s.currentLoginState())
+}
+
+func (s *Server) handleXHSLoginStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	writeJSON(w, s.currentLoginState())
+}
+
+func (s *Server) handleXHSLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	if err := os.Remove("data/cookies.json"); err != nil && !os.IsNotExist(err) {
+		writeError(w, err)
+		return
+	}
+	if s.xhsCollector != nil {
+		s.xhsCollector.Close()
+	}
+	s.xhsCollector = xhsnative.NewCollector(false, os.Getenv("ROD_BROWSER_BIN"))
+	s.mu.Lock()
+	s.loginState = LoginState{Status: "idle", Message: "已登出，cookies 已清除", CookiePath: "data/cookies.json"}
+	s.mu.Unlock()
+	writeJSON(w, s.currentLoginState())
+}
+
+func (s *Server) runXHSPersistentPageQRCodeLogin(qrReady chan<- struct{}, fromAuthBlock bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+
+	var qrcode string
+	var err error
+	if fromAuthBlock {
+		qrcode, err = s.xhsCollector.CurrentQRCodeDataURL(ctx)
+	}
+	if qrcode == "" {
+		if loggedIn, checkErr := s.xhsCollector.CheckPersistentLoginStatus(ctx); checkErr == nil && loggedIn {
+			s.mu.Lock()
+			s.loginState.Status = "succeeded"
+			s.loginState.Message = "当前小红书登录态可用，没有生成二维码"
+			s.loginState.QRCodeDataURL = ""
+			s.loginState.CookiePath = "data/cookies.json"
+			s.loginState.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+			s.mu.Unlock()
+			select {
+			case qrReady <- struct{}{}:
+			default:
+			}
+			return
+		}
+		qrcode, err = s.xhsCollector.OpenLoginQRCodeDataURL(ctx)
+	}
+	if err != nil {
+		s.mu.Lock()
+		s.loginState.Status = "failed"
+		s.loginState.Message = err.Error()
+		s.loginState.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+		s.mu.Unlock()
+		select {
+		case qrReady <- struct{}{}:
+		default:
+		}
+		return
+	}
+	s.mu.Lock()
+	s.loginState.Status = "waiting"
+	s.loginState.Message = "请使用小红书 App 扫码完成当前页面验证"
+	s.loginState.QRCodeDataURL = qrcode
+	s.loginState.QRCodeHTMLPath = ""
+	s.loginState.CookiePath = "data/cookies.json"
+	s.mu.Unlock()
+	select {
+	case qrReady <- struct{}{}:
+	default:
+	}
+
+	err = s.xhsCollector.WaitForCurrentQRCodeResolved(ctx, "data/cookies.json")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.loginState.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+	if err != nil {
+		s.loginState.Status = "failed"
+		s.loginState.Message = err.Error()
+		return
+	}
+	s.loginState.Status = "succeeded"
+	s.loginState.Message = "扫码验证完成，cookies 已保存"
+	s.loginState.CookiePath = "data/cookies.json"
+	s.loginState.SavedCookies = true
+	select {
+	case qrReady <- struct{}{}:
+	default:
+	}
+}
+
+func (s *Server) runXHSQRCodeLogin(qrReady chan<- struct{}, forceScan bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	manager := xhsnative.NewSessionManager(true, "", "data/cookies.json")
+	result, err := manager.LoginWithQRCodeDataOptions(ctx, "data/login-qrcode.html", 4*time.Minute, forceScan, func(path, qrcode string) {
+		s.mu.Lock()
+		s.loginState.Status = "waiting"
+		s.loginState.Message = "请使用小红书 App 扫码登录"
+		s.loginState.QRCodeHTMLPath = path
+		s.loginState.QRCodeDataURL = qrcode
+		s.loginState.CookiePath = "data/cookies.json"
+		s.mu.Unlock()
+		select {
+		case qrReady <- struct{}{}:
+		default:
+		}
+	})
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.loginState.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+	if err != nil {
+		if s.loginState.Status == "starting" {
+			select {
+			case qrReady <- struct{}{}:
+			default:
+			}
+		}
+		s.loginState.Status = "failed"
+		s.loginState.Message = err.Error()
+		return
+	}
+	s.loginState.Status = "succeeded"
+	s.loginState.Message = "登录成功，cookies 已保存"
+	s.loginState.QRCodeDataURL = result.QRCodeDataURL
+	s.loginState.QRCodeHTMLPath = result.QRCodeHTMLPath
+	s.loginState.CookiePath = result.CookiePath
+	s.loginState.SavedCookies = result.SavedCookies
+	s.loginState.AlreadyLoggedIn = result.AlreadyLoggedIn
+	if forceScan && s.xhsCollector != nil {
+		s.xhsCollector.Close()
+		s.xhsCollector = xhsnative.NewCollector(false, os.Getenv("ROD_BROWSER_BIN"))
+	}
+	select {
+	case qrReady <- struct{}{}:
+	default:
+	}
+}
+
+func (s *Server) currentLoginState() LoginState {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.loginState.Status == "" {
+		return LoginState{Status: "idle", Message: "未开始登录", CookiePath: "data/cookies.json"}
+	}
+	return s.loginState
+}
+
+func (s *Server) selectedTargets(ctx context.Context, ids []int64) ([]storage.Target, error) {
+	all, err := s.db.ListTargets(ctx, 1000)
+	if err != nil {
+		return nil, err
+	}
+	want := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		want[id] = true
+	}
+	targets := make([]storage.Target, 0, len(ids))
+	for _, target := range all {
+		if want[target.ID] {
+			targets = append(targets, target)
+		}
+	}
+	return targets, nil
+}
+
+func (s *Server) collectorCommand(itemLimit int) string {
+	if itemLimit <= 0 {
+		itemLimit = 3
+	}
+	if itemLimit > 50 {
+		itemLimit = 50
+	}
+	command := firstNonEmpty(s.collectorCmd, "go run ./cmd/xhs-native-collector")
+	return fmt.Sprintf("%s --limit %d --details=true", command, itemLimit)
 }
 
 func (s *Server) handleAnalyzeBatch(w http.ResponseWriter, r *http.Request) {

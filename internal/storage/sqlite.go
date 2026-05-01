@@ -27,17 +27,20 @@ type Target struct {
 }
 
 type Item struct {
-	ExternalID   string         `json:"external_id"`
-	URL          string         `json:"url"`
-	AuthorName   string         `json:"author_name"`
-	Title        string         `json:"title"`
-	Body         string         `json:"body"`
-	Tags         []string       `json:"tags"`
-	LikeCount    *int           `json:"like_count"`
-	CollectCount *int           `json:"collect_count"`
-	CommentCount *int           `json:"comment_count"`
-	PublishedAt  string         `json:"published_at"`
-	Raw          map[string]any `json:"raw"`
+	ExternalID    string         `json:"external_id"`
+	URL           string         `json:"url"`
+	AuthorName    string         `json:"author_name"`
+	Title         string         `json:"title"`
+	Body          string         `json:"body"`
+	Tags          []string       `json:"tags"`
+	DetailStatus  string         `json:"detail_status"`
+	DetailMessage string         `json:"detail_message"`
+	MissingFields []string       `json:"missing_fields"`
+	LikeCount     *int           `json:"like_count"`
+	CollectCount  *int           `json:"collect_count"`
+	CommentCount  *int           `json:"comment_count"`
+	PublishedAt   string         `json:"published_at"`
+	Raw           map[string]any `json:"raw"`
 }
 
 type StoredItem struct {
@@ -57,6 +60,20 @@ type Run struct {
 	Message    string `json:"message"`
 	StartedAt  string `json:"started_at"`
 	FinishedAt string `json:"finished_at"`
+}
+
+type RunItem struct {
+	RunID      int64  `json:"run_id"`
+	ItemID     int64  `json:"item_id"`
+	ExternalID string `json:"external_id"`
+	URL        string `json:"url"`
+	AuthorName string `json:"author_name"`
+	Title      string `json:"title"`
+}
+
+type RunDetail struct {
+	Run
+	Items []RunItem `json:"items"`
 }
 
 type NoteAnalysis struct {
@@ -176,8 +193,10 @@ func (d *DB) Close() error {
 }
 
 func (d *DB) Migrate(ctx context.Context) error {
-	_, err := d.db.ExecContext(ctx, schema)
-	return err
+	if _, err := d.db.ExecContext(ctx, schema); err != nil {
+		return err
+	}
+	return d.ensureCollectedItemColumns(ctx)
 }
 
 func (d *DB) AddTarget(ctx context.Context, t Target) (int64, error) {
@@ -311,22 +330,35 @@ func (d *DB) FinishRun(ctx context.Context, runID int64, status, message string,
 }
 
 func (d *DB) SaveItems(ctx context.Context, targetID int64, items []Item, capturedAt time.Time) error {
+	_, err := d.saveItems(ctx, 0, targetID, items, capturedAt)
+	return err
+}
+
+func (d *DB) SaveItemsForRun(ctx context.Context, runID, targetID int64, items []Item, capturedAt time.Time) ([]RunItem, error) {
+	return d.saveItems(ctx, runID, targetID, items, capturedAt)
+}
+
+func (d *DB) saveItems(ctx context.Context, runID, targetID int64, items []Item, capturedAt time.Time) ([]RunItem, error) {
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO collected_items(
 			target_id, external_id, url, author_name, title, body, tags_json,
+			detail_status, detail_message, missing_fields_json,
 			like_count, collect_count, comment_count, published_at, raw_json, captured_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(target_id, external_id) DO UPDATE SET
 			url = excluded.url,
 			author_name = excluded.author_name,
 			title = excluded.title,
 			body = excluded.body,
 			tags_json = excluded.tags_json,
+			detail_status = excluded.detail_status,
+			detail_message = excluded.detail_message,
+			missing_fields_json = excluded.missing_fields_json,
 			like_count = excluded.like_count,
 			collect_count = excluded.collect_count,
 			comment_count = excluded.comment_count,
@@ -335,11 +367,13 @@ func (d *DB) SaveItems(ctx context.Context, targetID int64, items []Item, captur
 			captured_at = excluded.captured_at`)
 	if err != nil {
 		_ = tx.Rollback()
-		return err
+		return nil, err
 	}
 	defer stmt.Close()
+	saved := make([]RunItem, 0, len(items))
 	for _, item := range items {
 		tagsJSON, _ := json.Marshal(item.Tags)
+		missingJSON, _ := json.Marshal(item.MissingFields)
 		rawJSON, _ := json.Marshal(item.Raw)
 		externalID := item.ExternalID
 		if externalID == "" {
@@ -347,14 +381,44 @@ func (d *DB) SaveItems(ctx context.Context, targetID int64, items []Item, captur
 		}
 		if _, err := stmt.ExecContext(ctx,
 			targetID, externalID, item.URL, item.AuthorName, item.Title, item.Body, string(tagsJSON),
+			item.DetailStatus, item.DetailMessage, string(missingJSON),
 			item.LikeCount, item.CollectCount, item.CommentCount, item.PublishedAt, string(rawJSON),
 			capturedAt.UTC().Format(time.RFC3339),
 		); err != nil {
 			_ = tx.Rollback()
-			return err
+			return nil, err
 		}
+		runItem := RunItem{
+			RunID:      runID,
+			ExternalID: externalID,
+			URL:        item.URL,
+			AuthorName: item.AuthorName,
+			Title:      item.Title,
+		}
+		if err := tx.QueryRowContext(ctx, `
+			SELECT id, external_id, url, author_name, title
+			FROM collected_items
+			WHERE target_id = ? AND external_id = ?`, targetID, externalID).
+			Scan(&runItem.ItemID, &runItem.ExternalID, &runItem.URL, &runItem.AuthorName, &runItem.Title); err != nil {
+			_ = tx.Rollback()
+			return nil, err
+		}
+		if runID > 0 {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO collection_run_items(run_id, item_id, title, created_at)
+				VALUES (?, ?, ?, ?)
+				ON CONFLICT(run_id, item_id) DO UPDATE SET title = excluded.title`,
+				runID, runItem.ItemID, runItem.Title, capturedAt.UTC().Format(time.RFC3339)); err != nil {
+				_ = tx.Rollback()
+				return nil, err
+			}
+		}
+		saved = append(saved, runItem)
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return saved, nil
 }
 
 func (d *DB) ListItems(ctx context.Context, limit int) ([]StoredItem, error) {
@@ -363,7 +427,8 @@ func (d *DB) ListItems(ctx context.Context, limit int) ([]StoredItem, error) {
 	}
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT i.id, i.target_id, t.name, i.external_id, i.url, i.author_name, i.title, i.body,
-		       i.tags_json, i.like_count, i.collect_count, i.comment_count, i.published_at, i.raw_json, i.captured_at
+		       i.tags_json, i.detail_status, i.detail_message, i.missing_fields_json,
+		       i.like_count, i.collect_count, i.comment_count, i.published_at, i.raw_json, i.captured_at
 		FROM collected_items i
 		JOIN collector_targets t ON t.id = i.target_id
 		ORDER BY i.captured_at DESC, i.id DESC
@@ -386,11 +451,90 @@ func (d *DB) ListItems(ctx context.Context, limit int) ([]StoredItem, error) {
 func (d *DB) GetItem(ctx context.Context, id int64) (StoredItem, error) {
 	row := d.db.QueryRowContext(ctx, `
 		SELECT i.id, i.target_id, t.name, i.external_id, i.url, i.author_name, i.title, i.body,
-		       i.tags_json, i.like_count, i.collect_count, i.comment_count, i.published_at, i.raw_json, i.captured_at
+		       i.tags_json, i.detail_status, i.detail_message, i.missing_fields_json,
+		       i.like_count, i.collect_count, i.comment_count, i.published_at, i.raw_json, i.captured_at
 		FROM collected_items i
 		JOIN collector_targets t ON t.id = i.target_id
 		WHERE i.id = ?`, id)
 	return scanStoredItem(row)
+}
+
+func (d *DB) ItemExistsByExternalID(ctx context.Context, externalID string) (bool, error) {
+	if externalID == "" {
+		return false, nil
+	}
+	var exists int
+	err := d.db.QueryRowContext(ctx, `
+		SELECT 1
+		FROM collected_items
+		WHERE external_id = ?
+		LIMIT 1`, externalID).Scan(&exists)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return exists == 1, nil
+}
+
+func (d *DB) ListMissingItems(ctx context.Context, limit int) ([]StoredItem, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT i.id, i.target_id, t.name, i.external_id, i.url, i.author_name, i.title, i.body,
+		       i.tags_json, i.detail_status, i.detail_message, i.missing_fields_json,
+		       i.like_count, i.collect_count, i.comment_count, i.published_at, i.raw_json, i.captured_at
+		FROM collected_items i
+		JOIN collector_targets t ON t.id = i.target_id
+		WHERE json_array_length(i.missing_fields_json) > 0
+		   OR i.detail_status IN ('failed', 'search_only')
+		   OR i.body = ''
+		   OR i.tags_json = '[]'
+		   OR i.published_at = ''
+		ORDER BY i.captured_at DESC, i.id DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []StoredItem
+	for rows.Next() {
+		item, err := scanStoredItem(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (d *DB) ApplyItemCompletion(ctx context.Context, id int64, update Item) error {
+	if id <= 0 {
+		return fmt.Errorf("item id is required")
+	}
+	tagsJSON, _ := json.Marshal(update.Tags)
+	missingJSON, _ := json.Marshal(update.MissingFields)
+	rawJSON, _ := json.Marshal(update.Raw)
+	_, err := d.db.ExecContext(ctx, `
+		UPDATE collected_items
+		SET body = CASE WHEN ? != '' THEN ? ELSE body END,
+		    tags_json = CASE WHEN ? != '[]' THEN ? ELSE tags_json END,
+		    published_at = CASE WHEN ? != '' THEN ? ELSE published_at END,
+		    detail_status = ?,
+		    detail_message = ?,
+		    missing_fields_json = ?,
+		    raw_json = CASE WHEN ? != '{}' THEN ? ELSE raw_json END,
+		    captured_at = datetime('now')
+		WHERE id = ?`,
+		update.Body, update.Body,
+		string(tagsJSON), string(tagsJSON),
+		update.PublishedAt, update.PublishedAt,
+		update.DetailStatus, update.DetailMessage, string(missingJSON),
+		string(rawJSON), string(rawJSON),
+		id)
+	return err
 }
 
 func (d *DB) ListRuns(ctx context.Context, limit int) ([]Run, error) {
@@ -418,13 +562,89 @@ func (d *DB) ListRuns(ctx context.Context, limit int) ([]Run, error) {
 	return runs, rows.Err()
 }
 
+func (d *DB) ListRunItems(ctx context.Context, runID int64) ([]RunItem, error) {
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT ri.run_id, i.id, i.external_id, i.url, i.author_name, COALESCE(NULLIF(ri.title, ''), i.title)
+		FROM collection_run_items ri
+		JOIN collected_items i ON i.id = ri.item_id
+		WHERE ri.run_id = ?
+		ORDER BY ri.id ASC`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RunItem
+	for rows.Next() {
+		var item RunItem
+		if err := rows.Scan(&item.RunID, &item.ItemID, &item.ExternalID, &item.URL, &item.AuthorName, &item.Title); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (d *DB) ListRunDetails(ctx context.Context, limit int) ([]RunDetail, error) {
+	runs, err := d.ListRuns(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	details := make([]RunDetail, 0, len(runs))
+	for _, run := range runs {
+		items, err := d.ListRunItems(ctx, run.ID)
+		if err != nil {
+			return nil, err
+		}
+		details = append(details, RunDetail{Run: run, Items: items})
+	}
+	return details, nil
+}
+
 type itemScanner interface {
 	Scan(dest ...any) error
+}
+
+func (d *DB) ensureCollectedItemColumns(ctx context.Context) error {
+	columns := map[string]string{
+		"detail_status":       "TEXT NOT NULL DEFAULT ''",
+		"detail_message":      "TEXT NOT NULL DEFAULT ''",
+		"missing_fields_json": "TEXT NOT NULL DEFAULT '[]'",
+	}
+	existing := map[string]bool{}
+	rows, err := d.db.QueryContext(ctx, "PRAGMA table_info(collected_items)")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		existing[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for name, ddl := range columns {
+		if existing[name] {
+			continue
+		}
+		if _, err := d.db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE collected_items ADD COLUMN %s %s", name, ddl)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func scanStoredItem(scanner itemScanner) (StoredItem, error) {
 	var item StoredItem
 	var tagsJSON string
+	var missingFieldsJSON string
 	var rawJSON string
 	if err := scanner.Scan(
 		&item.ID,
@@ -436,6 +656,9 @@ func scanStoredItem(scanner itemScanner) (StoredItem, error) {
 		&item.Title,
 		&item.Body,
 		&tagsJSON,
+		&item.DetailStatus,
+		&item.DetailMessage,
+		&missingFieldsJSON,
 		&item.LikeCount,
 		&item.CollectCount,
 		&item.CommentCount,
@@ -448,16 +671,39 @@ func scanStoredItem(scanner itemScanner) (StoredItem, error) {
 	if tagsJSON != "" {
 		_ = json.Unmarshal([]byte(tagsJSON), &item.Tags)
 	}
+	if missingFieldsJSON != "" {
+		_ = json.Unmarshal([]byte(missingFieldsJSON), &item.MissingFields)
+	}
 	if rawJSON != "" {
 		_ = json.Unmarshal([]byte(rawJSON), &item.Raw)
 	}
 	if item.Tags == nil {
 		item.Tags = []string{}
 	}
+	if item.MissingFields == nil {
+		item.MissingFields = []string{}
+	}
+	if len(item.MissingFields) == 0 {
+		item.MissingFields = missingFields(item.Item)
+	}
 	if item.Raw == nil {
 		item.Raw = map[string]any{}
 	}
 	return item, nil
+}
+
+func missingFields(item Item) []string {
+	var missing []string
+	if item.Body == "" {
+		missing = append(missing, "body")
+	}
+	if len(item.Tags) == 0 {
+		missing = append(missing, "tags")
+	}
+	if item.PublishedAt == "" {
+		missing = append(missing, "published_at")
+	}
+	return missing
 }
 
 func (d *DB) SaveNoteAnalysis(ctx context.Context, analysis NoteAnalysis) (int64, error) {
@@ -1081,6 +1327,15 @@ CREATE TABLE IF NOT EXISTS collection_runs (
 	finished_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS collection_run_items (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	run_id INTEGER NOT NULL REFERENCES collection_runs(id),
+	item_id INTEGER NOT NULL REFERENCES collected_items(id),
+	title TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	UNIQUE(run_id, item_id)
+);
+
 CREATE TABLE IF NOT EXISTS collected_items (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	target_id INTEGER NOT NULL REFERENCES collector_targets(id),
@@ -1090,6 +1345,9 @@ CREATE TABLE IF NOT EXISTS collected_items (
 	title TEXT NOT NULL DEFAULT '',
 	body TEXT NOT NULL DEFAULT '',
 	tags_json TEXT NOT NULL DEFAULT '[]',
+	detail_status TEXT NOT NULL DEFAULT '',
+	detail_message TEXT NOT NULL DEFAULT '',
+	missing_fields_json TEXT NOT NULL DEFAULT '[]',
 	like_count INTEGER,
 	collect_count INTEGER,
 	comment_count INTEGER,

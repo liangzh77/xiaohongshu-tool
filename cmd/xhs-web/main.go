@@ -21,7 +21,7 @@ func main() {
 func run() error {
 	addr := flag.String("addr", ":8080", "HTTP listen address")
 	dbPath := flag.String("db", "data/xhs.db", "SQLite database path")
-	collectorCmd := flag.String("collector-command", "go run ./cmd/xhs-native-collector --limit 3 --details=false", "collector command")
+	collectorCmd := flag.String("collector-command", "go run ./cmd/xhs-native-collector", "base collector command")
 	limit := flag.Int("limit", 20, "default list limit")
 	llmBaseURL := flag.String("llm-base-url", getenvDefault("XHS_LLM_BASE_URL", "https://api.openai.com/v1"), "OpenAI-compatible base URL")
 	llmModel := flag.String("llm-model", os.Getenv("XHS_LLM_MODEL"), "LLM model")
