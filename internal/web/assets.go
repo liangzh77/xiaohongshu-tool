@@ -148,6 +148,7 @@ const indexHTML = `<!doctype html>
       max-height: 290px;
       overflow: auto;
     }
+    .run-log { max-height: 360px; }
     .empty { color: var(--muted); padding: 20px 0; }
     .detail-title { margin: 0 0 8px; font-size: 18px; }
     .detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
@@ -395,7 +396,7 @@ const indexHTML = `<!doctype html>
         + '<div class="detail-line"><strong>标签</strong>' + esc(tags || "-") + '</div>'
         + '<div class="detail-line"><strong>链接</strong>' + (item.url ? '<a class="detail-link" href="' + esc(item.url) + '" target="_blank" rel="noreferrer">' + esc(item.url) + '</a>' : "-") + '</div>'
         + (shouldShowDetailFailure(item) ? '<h3>详情失败原因</h3><pre>' + esc(item.detail_message) + '</pre>' : '')
-        + '<h3>正文</h3><pre>' + esc(item.body || "采集结果没有正文。可将采集命令改为 --details=true 后重采。") + '</pre>'
+        + '<h3>正文</h3>' + (item.body ? '<pre>' + esc(item.body) + '</pre>' : '<div class="empty">无正文</div>')
         + '<h3>原始 JSON</h3><pre>' + esc(JSON.stringify(item.raw || {}, null, 2)) + '</pre>';
     }
     function detailField(label, value) { return '<div class="detail-field"><strong>' + esc(label) + '</strong><span>' + value + '</span></div>'; }
@@ -418,7 +419,9 @@ const indexHTML = `<!doctype html>
       const titles = items.length ? items.map((it, idx) => '<div class="item"><h3>' + (idx + 1) + '. ' + esc(it.title || "无标题") + '</h3><div class="meta"><span>' + esc(it.author_name || "未知作者") + '</span>' + (it.url ? '<span><a class="detail-link" href="' + esc(it.url) + '" target="_blank" rel="noreferrer">打开链接</a></span>' : '') + '</div></div>').join("") : '<div class="empty">这条运行没有关联内容。旧运行记录可能没有详情。</div>';
       el.innerHTML = '<div class="meta"><span>目标 ' + esc(detail.target_name || "") + '</span><span>状态 ' + esc(detail.status || "") + '</span><span>模式 ' + esc(detail.mode || "") + '</span><span>开始 ' + esc(detail.started_at || "") + '</span><span>结束 ' + esc(detail.finished_at || "-") + '</span><span>采集 ' + items.length + ' 条</span></div>'
         + '<h3>本次采集内容</h3>' + titles
-        + (detail.message ? '<h3>运行日志</h3><pre>' + esc(detail.message) + '</pre>' : '<div class="empty">这次运行没有日志。</div>');
+        + (detail.message ? '<h3>运行日志</h3><pre id="runLogPre" class="run-log">' + esc(detail.message) + '</pre>' : '<div class="empty">这次运行没有日志。</div>');
+      const logPre = qs("runLogPre");
+      if (logPre) requestAnimationFrame(() => { logPre.scrollTop = logPre.scrollHeight; });
     }
     function runDetailFor(id) {
       return ((state.data && state.data.run_details) || []).find(r => Number(r.id) === Number(id));
@@ -537,9 +540,14 @@ const indexHTML = `<!doctype html>
       return { target_ids: targetIds, item_limit: Number(qs("collectItemLimit").value || 3) };
     }
     async function runCollect(body, fromLoginRetry = false) {
+      let progressTimer = null;
       try {
         setStatus("collectRunStatus", fromLoginRetry ? "登录成功，继续采集..." : "采集中...");
+        state.selectedRunId = 0;
+        progressTimer = setInterval(() => refresh().catch(() => {}), 2000);
         const result = await api("/api/collect/once", { method: "POST", body: JSON.stringify(body) });
+        clearInterval(progressTimer);
+        progressTimer = null;
         await refresh();
         const titles = (result.runs || []).flatMap(r => r.titles || []).filter(Boolean);
         state.pendingCollectBody = null;
@@ -550,11 +558,13 @@ const indexHTML = `<!doctype html>
           setStatus("collectRunStatus", "采集完成：目标 " + result.target_count + " 个，内容 " + result.item_count + " 条" + (titles.length ? "；" + titles.slice(0, 5).join(" / ") : ""), "ok");
         }
       } catch (err) {
-        setStatus("collectRunStatus", err.message, "error");
+        if (progressTimer) clearInterval(progressTimer);
         if (isXHSLoginExpired(err.message) && !state.retryingCollectAfterLogin) {
           state.pendingCollectBody = body;
+          setStatus("collectRunStatus", "小红书登录态已失效，请在右侧扫码验证；验证成功后会自动继续采集。");
           startXHSLogin(true);
         } else {
+          setStatus("collectRunStatus", err.message, "error");
           state.pendingCollectBody = null;
           state.retryingCollectAfterLogin = false;
         }

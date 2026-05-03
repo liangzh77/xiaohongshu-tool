@@ -329,6 +329,13 @@ func (d *DB) FinishRun(ctx context.Context, runID int64, status, message string,
 	return err
 }
 
+func (d *DB) UpdateRunMessage(ctx context.Context, runID int64, message string) error {
+	_, err := d.db.ExecContext(ctx, `
+		UPDATE collection_runs SET message = ? WHERE id = ?`,
+		message, runID)
+	return err
+}
+
 func (d *DB) SaveItems(ctx context.Context, targetID int64, items []Item, capturedAt time.Time) error {
 	_, err := d.saveItems(ctx, 0, targetID, items, capturedAt)
 	return err
@@ -468,6 +475,27 @@ func (d *DB) ItemExistsByExternalID(ctx context.Context, externalID string) (boo
 		SELECT 1
 		FROM collected_items
 		WHERE external_id = ?
+		LIMIT 1`, externalID).Scan(&exists)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return exists == 1, nil
+}
+
+func (d *DB) ItemHasCompleteDetailByExternalID(ctx context.Context, externalID string) (bool, error) {
+	if externalID == "" {
+		return false, nil
+	}
+	var exists int
+	err := d.db.QueryRowContext(ctx, `
+		SELECT 1
+		FROM collected_items
+		WHERE external_id = ?
+		  AND detail_status = 'succeeded'
+		  AND json_array_length(missing_fields_json) = 0
 		LIMIT 1`, externalID).Scan(&exists)
 	if err == sql.ErrNoRows {
 		return false, nil

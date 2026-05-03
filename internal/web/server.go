@@ -337,14 +337,20 @@ func (s *Server) runLocalBrowserCollection(ctx context.Context, targets []storag
 			_ = s.db.FinishRun(ctx, runID, "failed", "关键词为空", time.Now())
 			continue
 		}
+		progressLogs := []string{}
+		updateProgress := func(line string) {
+			progressLogs = append(progressLogs, line)
+			_ = s.db.UpdateRunMessage(context.Background(), runID, strings.Join(progressLogs, "\n"))
+		}
 		result, err := s.xhsCollector.SearchThenOpenDetails(ctx, xhsnative.NaturalSearchOptions{
 			Keyword:  keyword,
 			Limit:    itemLimit,
-			DelayMin: 10 * time.Second,
-			DelayMax: 30 * time.Second,
+			DelayMin: 2 * time.Second,
+			DelayMax: 5 * time.Second,
 			Exists: func(ctx context.Context, externalID string) (bool, error) {
-				return s.db.ItemExistsByExternalID(ctx, externalID)
+				return s.db.ItemHasCompleteDetailByExternalID(ctx, externalID)
 			},
+			Log: updateProgress,
 		})
 		logs := result.Logs
 		if err != nil {

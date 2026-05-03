@@ -1,6 +1,7 @@
 package xhsnative
 
 import (
+	"fmt"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -46,17 +47,29 @@ func ItemFromDetail(detail *upstream.FeedDetailResponse) storage.Item {
 		CommentCount: intPtr(note.InteractInfo.CommentCount),
 		PublishedAt:  timeFromMillis(note.Time),
 		Raw: map[string]any{
-			"source": "xiaohongshu-native",
-			"note":   note,
+			"source":   "xiaohongshu-native",
+			"note":     note,
+			"comments": detail.Comments,
 		},
 	}
 }
 
 func MergeItem(base, detail storage.Item) storage.Item {
-	if detail.ExternalID != "" {
+	if base.ExternalID != "" && detail.ExternalID != "" && base.ExternalID != detail.ExternalID {
+		base.DetailStatus = "failed"
+		base.DetailMessage = fmt.Sprintf("detail external_id mismatch: search=%s detail=%s", base.ExternalID, detail.ExternalID)
+		base.Raw = map[string]any{
+			"source": "xiaohongshu-native",
+			"search": base.Raw,
+			"detail": detail.Raw,
+		}
+		base.MissingFields = MissingFields(base)
+		return base
+	}
+	if detail.ExternalID != "" && (base.ExternalID == "" || base.ExternalID == detail.ExternalID) {
 		base.ExternalID = detail.ExternalID
 	}
-	if detail.URL != "" {
+	if detail.URL != "" && (base.ExternalID == "" || detail.ExternalID == "" || base.ExternalID == detail.ExternalID) {
 		base.URL = detail.URL
 	}
 	if detail.AuthorName != "" {
@@ -109,7 +122,7 @@ func MarkDetailFailure(item storage.Item, err error) storage.Item {
 
 func MissingFields(item storage.Item) []string {
 	var missing []string
-	if strings.TrimSpace(item.Body) == "" {
+	if strings.TrimSpace(item.Body) == "" && len(item.Tags) == 0 {
 		missing = append(missing, "body")
 	}
 	if len(item.Tags) == 0 {

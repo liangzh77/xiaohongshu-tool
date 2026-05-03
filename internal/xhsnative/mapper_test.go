@@ -1,6 +1,7 @@
 package xhsnative
 
 import (
+	"strings"
 	"testing"
 
 	upstream "github.com/xpzouying/xiaohongshu-mcp/xiaohongshu"
@@ -62,6 +63,33 @@ func TestItemFromDetail(t *testing.T) {
 	}
 	if item.PublishedAt != "2023-12-10T08:00:00Z" {
 		t.Fatalf("unexpected published_at %q", item.PublishedAt)
+	}
+}
+
+func TestMergeItemRejectsMismatchedDetailID(t *testing.T) {
+	base := ItemFromFeed(upstream.Feed{
+		ID: "search-note",
+		NoteCard: upstream.NoteCard{
+			DisplayTitle: "search title",
+		},
+	})
+	detail := ItemFromDetail(&upstream.FeedDetailResponse{
+		Note: upstream.FeedDetail{
+			NoteID: "detail-note",
+			Title:  "detail title",
+			Desc:   "detail body #tag",
+		},
+	})
+
+	item := MergeItem(base, detail)
+	if item.ExternalID != "search-note" {
+		t.Fatalf("external id was overwritten: %#v", item)
+	}
+	if item.Title != "search title" || item.Body != "" || len(item.Tags) != 0 {
+		t.Fatalf("mismatched detail fields were merged: %#v", item)
+	}
+	if item.DetailStatus != "failed" || !strings.Contains(item.DetailMessage, "mismatch") {
+		t.Fatalf("expected mismatch failure: %#v", item)
 	}
 }
 
