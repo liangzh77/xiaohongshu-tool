@@ -235,7 +235,7 @@ func (c *Collector) SearchThenOpenDetails(ctx context.Context, opts NaturalSearc
 		}
 		item := MergeItem(card, ItemFromDetail(detail))
 		result.Items = append(result.Items, item)
-		logProgress("第 %d 条详情成功：body_len=%d tags=%s published_at=%s", index+1, len(item.Body), strings.Join(item.Tags, "/"), item.PublishedAt)
+		logProgress("第 %d 条详情成功：body_len=%d tags=%s published_at=%s", index+1, len(item.Body), strings.Join(item.Tags, "/"), storage.FormatBeijingTime(item.PublishedAt))
 		if err := returnToSearchResults(ctx, page, opts.Keyword, logProgress); err != nil {
 			logProgress("第 %d 条后返回搜索列表失败：%v", index+1, err)
 			return result, err

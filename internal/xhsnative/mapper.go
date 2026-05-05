@@ -20,6 +20,7 @@ func ItemFromFeed(feed upstream.Feed) storage.Item {
 		AuthorName:    firstNonEmpty(feed.NoteCard.User.Nickname, feed.NoteCard.User.NickName),
 		Title:         feed.NoteCard.DisplayTitle,
 		Tags:          []string{},
+		Comments:      []storage.Comment{},
 		DetailStatus:  "search_only",
 		MissingFields: []string{"body", "tags", "published_at"},
 		LikeCount:     intPtr(feed.NoteCard.InteractInfo.LikedCount),
@@ -41,6 +42,7 @@ func ItemFromDetail(detail *upstream.FeedDetailResponse) storage.Item {
 		Title:        note.Title,
 		Body:         StripTags(note.Desc),
 		Tags:         extractTags(note.Desc),
+		Comments:     commentsFromUpstream(detail.Comments.List),
 		DetailStatus: "succeeded",
 		LikeCount:    intPtr(note.InteractInfo.LikedCount),
 		CollectCount: intPtr(note.InteractInfo.CollectedCount),
@@ -83,6 +85,9 @@ func MergeItem(base, detail storage.Item) storage.Item {
 	}
 	if len(detail.Tags) > 0 {
 		base.Tags = detail.Tags
+	}
+	if len(detail.Comments) > 0 {
+		base.Comments = detail.Comments
 	}
 	if detail.LikeCount != nil {
 		base.LikeCount = detail.LikeCount
@@ -183,6 +188,26 @@ func timeFromMillis(millis int64) string {
 		return ""
 	}
 	return time.UnixMilli(millis).UTC().Format(time.RFC3339)
+}
+
+func commentsFromUpstream(comments []upstream.Comment) []storage.Comment {
+	mapped := make([]storage.Comment, 0, len(comments))
+	for _, comment := range comments {
+		mapped = append(mapped, storage.Comment{
+			ID:              comment.ID,
+			AuthorName:      firstNonEmpty(comment.UserInfo.Nickname, comment.UserInfo.NickName),
+			Content:         comment.Content,
+			LikeCount:       comment.LikeCount,
+			CreatedAt:       storage.FormatBeijingUnixMilli(comment.CreateTime),
+			IPLocation:      comment.IPLocation,
+			SubCommentCount: comment.SubCommentCount,
+			SubComments:     commentsFromUpstream(comment.SubComments),
+		})
+	}
+	if mapped == nil {
+		return []storage.Comment{}
+	}
+	return mapped
 }
 
 func feedURL(feedID, xsecToken string) string {

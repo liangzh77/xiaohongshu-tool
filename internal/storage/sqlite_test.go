@@ -567,7 +567,7 @@ func TestSaveAndListPublishRecordsAndPerformanceSnapshots(t *testing.T) {
 	if len(records) != 1 {
 		t.Fatalf("expected one publish record, got %d", len(records))
 	}
-	if records[0].Status != "reviewed" || records[0].PublishedAt != publishedAt || records[0].Operator != "editor-a" {
+	if records[0].Status != "reviewed" || records[0].PublishedAt != "2026-04-28 12:00:00" || records[0].Operator != "editor-a" {
 		t.Fatalf("unexpected publish record: %#v", records[0])
 	}
 
@@ -596,7 +596,7 @@ func TestSaveAndListPublishRecordsAndPerformanceSnapshots(t *testing.T) {
 	if len(snapshots) != 1 {
 		t.Fatalf("expected one snapshot, got %d", len(snapshots))
 	}
-	if snapshots[0].PublishRecordID != recordID || snapshots[0].Likes != 88 || snapshots[0].RawJSON["source"] != "manual" {
+	if snapshots[0].PublishRecordID != recordID || snapshots[0].Likes != 88 || snapshots[0].CapturedAt != "2026-04-29 12:00:00" || snapshots[0].RawJSON["source"] != "manual" {
 		t.Fatalf("unexpected snapshot: %#v", snapshots[0])
 	}
 }

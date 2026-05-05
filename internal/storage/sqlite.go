@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -33,6 +35,7 @@ type Item struct {
 	Title         string         `json:"title"`
 	Body          string         `json:"body"`
 	Tags          []string       `json:"tags"`
+	Comments      []Comment      `json:"comments"`
 	DetailStatus  string         `json:"detail_status"`
 	DetailMessage string         `json:"detail_message"`
 	MissingFields []string       `json:"missing_fields"`
@@ -41,6 +44,17 @@ type Item struct {
 	CommentCount  *int           `json:"comment_count"`
 	PublishedAt   string         `json:"published_at"`
 	Raw           map[string]any `json:"raw"`
+}
+
+type Comment struct {
+	ID              string    `json:"id"`
+	AuthorName      string    `json:"author_name"`
+	Content         string    `json:"content"`
+	LikeCount       string    `json:"like_count"`
+	CreatedAt       string    `json:"created_at"`
+	IPLocation      string    `json:"ip_location"`
+	SubCommentCount string    `json:"sub_comment_count"`
+	SubComments     []Comment `json:"sub_comments"`
 }
 
 type StoredItem struct {
@@ -585,6 +599,8 @@ func (d *DB) ListRuns(ctx context.Context, limit int) ([]Run, error) {
 		if err := rows.Scan(&run.ID, &run.TargetID, &run.TargetName, &run.Mode, &run.Status, &run.Message, &run.StartedAt, &run.FinishedAt); err != nil {
 			return nil, err
 		}
+		run.StartedAt = FormatBeijingTime(run.StartedAt)
+		run.FinishedAt = FormatBeijingTime(run.FinishedAt)
 		runs = append(runs, run)
 	}
 	return runs, rows.Err()
@@ -708,6 +724,9 @@ func scanStoredItem(scanner itemScanner) (StoredItem, error) {
 	if item.Tags == nil {
 		item.Tags = []string{}
 	}
+	if item.Comments == nil {
+		item.Comments = commentsFromRaw(item.Raw)
+	}
 	if item.MissingFields == nil {
 		item.MissingFields = []string{}
 	}
@@ -717,7 +736,168 @@ func scanStoredItem(scanner itemScanner) (StoredItem, error) {
 	if item.Raw == nil {
 		item.Raw = map[string]any{}
 	}
+	item.PublishedAt = FormatBeijingTime(item.PublishedAt)
+	item.CapturedAt = FormatBeijingTime(item.CapturedAt)
 	return item, nil
+}
+
+var beijingLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
+
+func FormatBeijingTime(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	layouts := []struct {
+		layout string
+		utc    bool
+	}{
+		{time.RFC3339Nano, false},
+		{time.RFC3339, false},
+		{"2006-01-02T15:04:05Z07:00", false},
+		{"2006-01-02 15:04:05", true},
+	}
+	for _, candidate := range layouts {
+		var parsed time.Time
+		var err error
+		if candidate.utc {
+			parsed, err = time.ParseInLocation(candidate.layout, value, time.UTC)
+		} else {
+			parsed, err = time.Parse(candidate.layout, value)
+		}
+		if err == nil {
+			return parsed.In(beijingLocation).Format("2006-01-02 15:04:05")
+		}
+	}
+	return value
+}
+
+func FormatBeijingUnixMilli(millis int64) string {
+	if millis <= 0 {
+		return ""
+	}
+	return time.UnixMilli(millis).In(beijingLocation).Format("2006-01-02 15:04:05")
+}
+
+func commentsFromRaw(raw map[string]any) []Comment {
+	if raw == nil {
+		return []Comment{}
+	}
+	for _, value := range []any{
+		raw["comments"],
+		nestedRawValue(raw, "detail", "comments"),
+		nestedRawValue(raw, "detail", "detail", "comments"),
+	} {
+		comments := commentsFromValue(value)
+		if len(comments) > 0 {
+			return comments
+		}
+	}
+	return []Comment{}
+}
+
+func nestedRawValue(raw map[string]any, path ...string) any {
+	var current any = raw
+	for _, key := range path {
+		obj, ok := current.(map[string]any)
+		if !ok {
+			return nil
+		}
+		current = obj[key]
+	}
+	return current
+}
+
+func commentsFromValue(value any) []Comment {
+	obj, ok := value.(map[string]any)
+	if !ok {
+		return []Comment{}
+	}
+	list, ok := obj["list"].([]any)
+	if !ok {
+		return []Comment{}
+	}
+	comments := make([]Comment, 0, len(list))
+	for _, entry := range list {
+		comment, ok := commentFromValue(entry)
+		if ok {
+			comments = append(comments, comment)
+		}
+	}
+	return comments
+}
+
+func commentFromValue(value any) (Comment, bool) {
+	obj, ok := value.(map[string]any)
+	if !ok {
+		return Comment{}, false
+	}
+	comment := Comment{
+		ID:              stringFromAny(obj["id"]),
+		Content:         stringFromAny(obj["content"]),
+		LikeCount:       stringFromAny(obj["likeCount"]),
+		CreatedAt:       FormatBeijingUnixMilli(int64FromAny(obj["createTime"])),
+		IPLocation:      stringFromAny(obj["ipLocation"]),
+		SubCommentCount: stringFromAny(obj["subCommentCount"]),
+	}
+	if user, ok := obj["userInfo"].(map[string]any); ok {
+		comment.AuthorName = firstNonEmptyString(stringFromAny(user["nickname"]), stringFromAny(user["nickName"]))
+	}
+	if subList, ok := obj["subComments"].([]any); ok {
+		comment.SubComments = make([]Comment, 0, len(subList))
+		for _, entry := range subList {
+			sub, ok := commentFromValue(entry)
+			if ok {
+				comment.SubComments = append(comment.SubComments, sub)
+			}
+		}
+	}
+	if comment.SubComments == nil {
+		comment.SubComments = []Comment{}
+	}
+	return comment, comment.ID != "" || comment.Content != ""
+}
+
+func stringFromAny(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case fmt.Stringer:
+		return v.String()
+	case float64:
+		return strconv.FormatInt(int64(v), 10)
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case int:
+		return strconv.Itoa(v)
+	default:
+		return ""
+	}
+}
+
+func int64FromAny(value any) int64 {
+	switch v := value.(type) {
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	case float64:
+		return int64(v)
+	case string:
+		parsed, _ := strconv.ParseInt(v, 10, 64)
+		return parsed
+	default:
+		return 0
+	}
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func missingFields(item Item) []string {
@@ -852,6 +1032,8 @@ func scanNoteAnalysis(scanner analysisScanner) (NoteAnalysis, error) {
 	if analysis.RawJSON == nil {
 		analysis.RawJSON = map[string]any{}
 	}
+	analysis.CreatedAt = FormatBeijingTime(analysis.CreatedAt)
+	analysis.UpdatedAt = FormatBeijingTime(analysis.UpdatedAt)
 	return analysis, nil
 }
 
@@ -969,6 +1151,8 @@ func scanTopicCandidate(scanner candidateScanner) (TopicCandidate, error) {
 	if candidate.RawJSON == nil {
 		candidate.RawJSON = map[string]any{}
 	}
+	candidate.CreatedAt = FormatBeijingTime(candidate.CreatedAt)
+	candidate.UpdatedAt = FormatBeijingTime(candidate.UpdatedAt)
 	return candidate, nil
 }
 
@@ -1088,6 +1272,8 @@ func scanGeneratedDraft(scanner draftScanner) (GeneratedDraft, error) {
 	if draft.RawJSON == nil {
 		draft.RawJSON = map[string]any{}
 	}
+	draft.CreatedAt = FormatBeijingTime(draft.CreatedAt)
+	draft.UpdatedAt = FormatBeijingTime(draft.UpdatedAt)
 	return draft, nil
 }
 
@@ -1163,6 +1349,9 @@ func (d *DB) ListPublishRecords(ctx context.Context, limit int) ([]PublishRecord
 		); err != nil {
 			return nil, err
 		}
+		record.PublishedAt = FormatBeijingTime(record.PublishedAt)
+		record.CreatedAt = FormatBeijingTime(record.CreatedAt)
+		record.UpdatedAt = FormatBeijingTime(record.UpdatedAt)
 		records = append(records, record)
 	}
 	return records, rows.Err()
@@ -1233,6 +1422,8 @@ func (d *DB) ListPerformanceSnapshots(ctx context.Context, limit int) ([]Perform
 		if snapshot.RawJSON == nil {
 			snapshot.RawJSON = map[string]any{}
 		}
+		snapshot.CapturedAt = FormatBeijingTime(snapshot.CapturedAt)
+		snapshot.CreatedAt = FormatBeijingTime(snapshot.CreatedAt)
 		snapshots = append(snapshots, snapshot)
 	}
 	return snapshots, rows.Err()
@@ -1326,6 +1517,8 @@ func (d *DB) ListPerformanceReports(ctx context.Context, limit int) ([]Performan
 		if report.RawJSON == nil {
 			report.RawJSON = map[string]any{}
 		}
+		report.CreatedAt = FormatBeijingTime(report.CreatedAt)
+		report.UpdatedAt = FormatBeijingTime(report.UpdatedAt)
 		reports = append(reports, report)
 	}
 	return reports, rows.Err()

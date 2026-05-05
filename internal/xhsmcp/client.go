@@ -91,11 +91,16 @@ func (c *Client) FeedDetail(ctx context.Context, feedID, xsecToken string, loadC
 	if !envelope.Success {
 		return AdapterResult{}, fmt.Errorf("xiaohongshu-mcp detail failed: %s", envelope.Error)
 	}
-	note := asMap(get(envelope.Data, "data", "note"))
+	data := asMap(get(envelope.Data, "data"))
+	note := asMap(get(data, "note"))
 	if len(note) == 0 {
 		return AdapterResult{}, fmt.Errorf("xiaohongshu-mcp detail response missing note")
 	}
-	return AdapterResult{Items: []storage.Item{itemFromNote(note)}}, nil
+	item := itemFromNote(note)
+	if comments := asMap(get(data, "comments")); len(comments) > 0 {
+		item.Raw["comments"] = comments
+	}
+	return AdapterResult{Items: []storage.Item{item}}, nil
 }
 
 func (c *Client) get(ctx context.Context, path string, out any) error {

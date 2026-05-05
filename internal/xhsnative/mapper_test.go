@@ -50,6 +50,20 @@ func TestItemFromDetail(t *testing.T) {
 				LikedCount: "8",
 			},
 		},
+		Comments: upstream.CommentList{
+			List: []upstream.Comment{
+				{
+					ID:         "comment-1",
+					Content:    "有用",
+					LikeCount:  "6",
+					CreateTime: 1702195200000,
+					IPLocation: "广东",
+					UserInfo: upstream.User{
+						Nickname: "评论者",
+					},
+				},
+			},
+		},
 	})
 
 	if item.ExternalID != "note-2" || item.Body != "正文" || item.AuthorName != "作者B" {
@@ -63,6 +77,9 @@ func TestItemFromDetail(t *testing.T) {
 	}
 	if item.PublishedAt != "2023-12-10T08:00:00Z" {
 		t.Fatalf("unexpected published_at %q", item.PublishedAt)
+	}
+	if len(item.Comments) != 1 || item.Comments[0].AuthorName != "评论者" || item.Comments[0].CreatedAt != "2023-12-10 16:00:00" {
+		t.Fatalf("unexpected comments: %#v", item.Comments)
 	}
 }
 

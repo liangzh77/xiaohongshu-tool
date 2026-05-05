@@ -160,6 +160,8 @@ const indexHTML = `<!doctype html>
     .detail-line strong { color: var(--muted); font-size: 12px; margin-right: 8px; }
     .detail-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 8px 0; }
     .detail-link { color: var(--accent); word-break: break-all; }
+    .comment-item pre { max-height: none; }
+    .comment-replies { margin-left: 18px; border-left: 2px solid var(--border); padding-left: 12px; }
     .qr-box { display: grid; gap: 10px; align-items: start; }
     .qr-box img { width: 220px; height: 220px; border: 1px solid var(--border); border-radius: 6px; background: white; padding: 8px; }
     .selectable pre { cursor: text; user-select: text; }
@@ -390,13 +392,14 @@ const indexHTML = `<!doctype html>
       if (!item) { el.innerHTML = '<div class="empty">请选择左侧内容</div>'; return; }
       const tags = (item.tags || []).join(" / ");
       el.innerHTML = '<h3 class="detail-title">' + esc(item.title || "无标题") + '</h3>'
-        + '<div class="meta"><span>ID ' + item.id + '</span><span>目标 ' + esc(item.target_name || "") + '</span><span>采集 ' + esc(item.captured_at || "") + '</span></div>'
+        + '<div class="meta"><span>ID ' + item.id + '</span><span>目标 ' + esc(item.target_name || "") + '</span><span>采集 ' + esc(formatBJ(item.captured_at) || "") + '</span></div>'
         + detailMetaBlock(item)
-        + '<div class="detail-compact"><span>作者 ' + esc(item.author_name || "-") + '</span><span>赞 ' + num(item.like_count) + '</span><span>藏 ' + num(item.collect_count) + '</span><span>评 ' + num(item.comment_count) + '</span><span>发布 ' + esc(item.published_at || "-") + '</span></div>'
+        + '<div class="detail-compact"><span>作者 ' + esc(item.author_name || "-") + '</span><span>赞 ' + num(item.like_count) + '</span><span>藏 ' + num(item.collect_count) + '</span><span>评 ' + num(item.comment_count) + '</span><span>发布 ' + esc(formatBJ(item.published_at) || "-") + '</span></div>'
         + '<div class="detail-line"><strong>标签</strong>' + esc(tags || "-") + '</div>'
         + '<div class="detail-line"><strong>链接</strong>' + (item.url ? '<a class="detail-link" href="' + esc(item.url) + '" target="_blank" rel="noreferrer">' + esc(item.url) + '</a>' : "-") + '</div>'
         + (shouldShowDetailFailure(item) ? '<h3>详情失败原因</h3><pre>' + esc(item.detail_message) + '</pre>' : '')
         + '<h3>正文</h3>' + (item.body ? '<pre>' + esc(item.body) + '</pre>' : '<div class="empty">无正文</div>')
+        + '<h3>评论</h3>' + renderComments(item.comments || commentsFromRaw(item.raw || {}))
         + '<h3>原始 JSON</h3><pre>' + esc(JSON.stringify(item.raw || {}, null, 2)) + '</pre>';
     }
     function detailField(label, value) { return '<div class="detail-field"><strong>' + esc(label) + '</strong><span>' + value + '</span></div>'; }
@@ -407,7 +410,7 @@ const indexHTML = `<!doctype html>
       const active = Number(r.id) === Number(state.selectedRunId) ? " active" : "";
       const detail = runDetailFor(r.id);
       const count = detail ? (detail.items || []).length : 0;
-      return '<div class="item selectable' + active + '" onclick="selectRunIfNoText(' + Number(r.id) + ')"><h3>' + esc(r.status) + ' <span class="pill">' + esc(r.mode) + '</span></h3><div class="meta"><span>' + esc(r.target_name) + '</span><span>' + esc(r.started_at) + '</span><span>内容 ' + count + '</span>' + (r.message ? '<span>有日志</span>' : '') + '</div></div>';
+      return '<div class="item selectable' + active + '" onclick="selectRunIfNoText(' + Number(r.id) + ')"><h3>' + esc(r.status) + ' <span class="pill">' + esc(r.mode) + '</span></h3><div class="meta"><span>' + esc(r.target_name) + '</span><span>' + esc(formatBJ(r.started_at)) + '</span><span>内容 ' + count + '</span>' + (r.message ? '<span>有日志</span>' : '') + '</div></div>';
     }
     function renderRunDetail() {
       const details = (state.data && state.data.run_details) || [];
@@ -417,7 +420,7 @@ const indexHTML = `<!doctype html>
       if (!detail) { el.innerHTML = '<div class="empty">请选择左侧运行记录</div>'; return; }
       const items = detail.items || [];
       const titles = items.length ? items.map((it, idx) => '<div class="item"><h3>' + (idx + 1) + '. ' + esc(it.title || "无标题") + '</h3><div class="meta"><span>' + esc(it.author_name || "未知作者") + '</span>' + (it.url ? '<span><a class="detail-link" href="' + esc(it.url) + '" target="_blank" rel="noreferrer">打开链接</a></span>' : '') + '</div></div>').join("") : '<div class="empty">这条运行没有关联内容。旧运行记录可能没有详情。</div>';
-      el.innerHTML = '<div class="meta"><span>目标 ' + esc(detail.target_name || "") + '</span><span>状态 ' + esc(detail.status || "") + '</span><span>模式 ' + esc(detail.mode || "") + '</span><span>开始 ' + esc(detail.started_at || "") + '</span><span>结束 ' + esc(detail.finished_at || "-") + '</span><span>采集 ' + items.length + ' 条</span></div>'
+      el.innerHTML = '<div class="meta"><span>目标 ' + esc(detail.target_name || "") + '</span><span>状态 ' + esc(detail.status || "") + '</span><span>模式 ' + esc(detail.mode || "") + '</span><span>开始 ' + esc(formatBJ(detail.started_at) || "") + '</span><span>结束 ' + esc(formatBJ(detail.finished_at) || "-") + '</span><span>采集 ' + items.length + ' 条</span></div>'
         + '<h3>本次采集内容</h3>' + titles
         + (detail.message ? '<h3>运行日志</h3><pre id="runLogPre" class="run-log">' + esc(detail.message) + '</pre>' : '<div class="empty">这次运行没有日志。</div>');
       const logPre = qs("runLogPre");
@@ -426,7 +429,7 @@ const indexHTML = `<!doctype html>
     function runDetailFor(id) {
       return ((state.data && state.data.run_details) || []).find(r => Number(r.id) === Number(id));
     }
-    function renderPublish(p) { return '<div class="item"><h3>' + esc(p.status || "published") + '</h3><div class="meta"><span>draft ' + p.draft_id + '</span><span>' + esc(p.published_at) + '</span></div>' + (p.note_url ? '<pre>' + esc(p.note_url) + '</pre>' : '') + '</div>'; }
+    function renderPublish(p) { return '<div class="item"><h3>' + esc(p.status || "published") + '</h3><div class="meta"><span>draft ' + p.draft_id + '</span><span>' + esc(formatBJ(p.published_at)) + '</span></div>' + (p.note_url ? '<pre>' + esc(p.note_url) + '</pre>' : '') + '</div>'; }
     function renderReport(r) { return '<div class="item"><div class="score">' + r.performance_score + '</div><h3>' + esc(r.summary) + '</h3><div class="meta"><span>互动基点 ' + r.engagement_rate_basis + '</span><span>涨粉基点 ' + r.follow_rate_basis + '</span></div><pre>' + esc(r.suggested_adjustment) + '</pre></div>'; }
     function renderList(id, items, renderItem) {
       const el = qs(id);
@@ -443,6 +446,76 @@ const indexHTML = `<!doctype html>
     function esc(value) { return String(value ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch])); }
     function field(obj, snake, pascal) { return obj && obj[snake] !== undefined ? obj[snake] : (obj ? obj[pascal] : ""); }
     function num(value) { return value === null || value === undefined ? "-" : value; }
+    function formatBJ(value) {
+      if (!value) return "";
+      const raw = String(value).trim();
+      if (!raw) return "";
+      if (/^\d{10,13}$/.test(raw)) {
+        const millis = raw.length === 10 ? Number(raw) * 1000 : Number(raw);
+        return formatBJ(new Date(millis).toISOString());
+      }
+      const displayMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/);
+      if (displayMatch && !raw.includes("T")) return raw.replace("T", " ");
+      let date = new Date(raw);
+      if (Number.isNaN(date.getTime()) && displayMatch) {
+        date = new Date(raw.replace(" ", "T") + "Z");
+      }
+      if (Number.isNaN(date.getTime())) return raw;
+      const parts = new Intl.DateTimeFormat("zh-CN", {
+        timeZone: "Asia/Shanghai",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false
+      }).formatToParts(date).reduce((acc, part) => {
+        acc[part.type] = part.value;
+        return acc;
+      }, {});
+      return parts.year + "-" + parts.month + "-" + parts.day + " " + parts.hour + ":" + parts.minute + ":" + parts.second;
+    }
+    function renderComments(comments) {
+      if (!comments || comments.length === 0) return '<div class="empty">无评论</div>';
+      return comments.map(comment => renderComment(comment, 0)).join("");
+    }
+    function renderComment(comment, level) {
+      const author = comment.author_name || comment.authorName || comment.user_name || "-";
+      const content = comment.content || "";
+      const created = formatBJ(comment.created_at || comment.createTime || "");
+      const likes = comment.like_count || comment.likeCount || "-";
+      const location = comment.ip_location || comment.ipLocation || "";
+      const subs = comment.sub_comments || comment.subComments || [];
+      return '<div class="item comment-item">'
+        + '<div class="meta"><span>' + esc(author) + '</span><span>' + esc(created || "-") + '</span><span>赞 ' + esc(likes) + '</span>' + (location ? '<span>' + esc(location) + '</span>' : '') + '</div>'
+        + '<pre>' + esc(content) + '</pre>'
+        + (subs.length ? '<div class="comment-replies">' + subs.map(sub => renderComment(sub, level + 1)).join("") + '</div>' : '')
+        + '</div>';
+    }
+    function commentsFromRaw(raw) {
+      const candidates = [
+        raw && raw.comments,
+        raw && raw.detail && raw.detail.comments,
+        raw && raw.detail && raw.detail.detail && raw.detail.detail.comments
+      ];
+      for (const candidate of candidates) {
+        if (candidate && Array.isArray(candidate.list) && candidate.list.length) return normalizeRawComments(candidate.list);
+      }
+      return [];
+    }
+    function normalizeRawComments(list) {
+      return list.map(comment => ({
+        id: comment.id || "",
+        author_name: (comment.userInfo && (comment.userInfo.nickname || comment.userInfo.nickName)) || "",
+        content: comment.content || "",
+        like_count: comment.likeCount || "",
+        created_at: comment.createTime || "",
+        ip_location: comment.ipLocation || "",
+        sub_comment_count: comment.subCommentCount || "",
+        sub_comments: normalizeRawComments(comment.subComments || [])
+      })).filter(comment => comment.id || comment.content);
+    }
     function detailStatusText(item) {
       const status = item.detail_status || "unknown";
       if (status === "succeeded") return "详情成功";
@@ -455,7 +528,8 @@ const indexHTML = `<!doctype html>
     function detailMetaBlock(item) {
       const missing = item.missing_fields || [];
       const status = item.detail_status || "";
-      if (missing.length === 0 && status !== "failed" && status !== "local_failed" && status !== "search_only") return "";
+      const needsAttention = status === "failed" || status === "local_failed" || status === "search_only";
+      if (!needsAttention) return "";
       return '<div class="detail-pair"><div class="detail-line"><strong>详情状态</strong>' + esc(detailStatusText(item)) + '</div><div class="detail-line"><strong>缺失字段</strong>' + esc(missing.join(" / ") || "-") + '</div></div>';
     }
     function shouldShowDetailFailure(item) {

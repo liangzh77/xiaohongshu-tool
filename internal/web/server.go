@@ -343,10 +343,11 @@ func (s *Server) runLocalBrowserCollection(ctx context.Context, targets []storag
 			_ = s.db.UpdateRunMessage(context.Background(), runID, strings.Join(progressLogs, "\n"))
 		}
 		result, err := s.xhsCollector.SearchThenOpenDetails(ctx, xhsnative.NaturalSearchOptions{
-			Keyword:  keyword,
-			Limit:    itemLimit,
-			DelayMin: 2 * time.Second,
-			DelayMax: 5 * time.Second,
+			Keyword:      keyword,
+			Limit:        itemLimit,
+			LoadComments: true,
+			DelayMin:     2 * time.Second,
+			DelayMax:     5 * time.Second,
 			Exists: func(ctx context.Context, externalID string) (bool, error) {
 				return s.db.ItemHasCompleteDetailByExternalID(ctx, externalID)
 			},
@@ -586,7 +587,10 @@ func (s *Server) currentLoginState() LoginState {
 	if s.loginState.Status == "" {
 		return LoginState{Status: "idle", Message: "未开始登录", CookiePath: "data/cookies.json"}
 	}
-	return s.loginState
+	state := s.loginState
+	state.StartedAt = storage.FormatBeijingTime(state.StartedAt)
+	state.FinishedAt = storage.FormatBeijingTime(state.FinishedAt)
+	return state
 }
 
 func (s *Server) selectedTargets(ctx context.Context, ids []int64) ([]storage.Target, error) {
